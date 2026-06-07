@@ -19,6 +19,11 @@ type ViewportSize = {
   width: number;
   height: number;
 };
+type BaySelection = {
+  zoneIndex: number;
+  aisle: number;
+  bay: number;
+};
 
 type LayoutConfig = {
   zones: number;
@@ -195,42 +200,24 @@ function pickCoordinateKey(
   return `${zoneIndex}-${aisle}-${bay}-${shelfIndex}-${slot}`;
 }
 
-function seededRandom(seed: number) {
-  let state = seed || 1;
-
-  return () => {
-    state = (state * 1664525 + 1013904223) % 4294967296;
-    return state / 4294967296;
-  };
+function baySelectionLabel(selection: BaySelection) {
+  return `${pad2(selection.zoneIndex)}${lettersFromNumber(selection.aisle)} Bay ${pad2(
+    selection.bay,
+  )}`;
 }
 
-function buildRandomPickStops(
-  locations: LocationRecord[],
-  count: number,
-  seed: number,
-) {
-  const targetCount = clampNumber(count, 1, Math.max(1, locations.length));
+function baySelectionName(selection: BaySelection) {
+  return `${pad2(selection.zoneIndex)}${lettersFromNumber(selection.aisle)}-${pad2(
+    selection.bay,
+  )}`;
+}
 
-  if (targetCount >= locations.length) {
-    return [...locations].sort((a, b) => alphaSort(a.name, b.name));
-  }
-
-  const random = seededRandom(seed);
-  const picks: LocationRecord[] = [];
-
-  locations.forEach((location, index) => {
-    if (index < targetCount) {
-      picks.push(location);
-      return;
-    }
-
-    const swapIndex = Math.floor(random() * (index + 1));
-    if (swapIndex < targetCount) {
-      picks[swapIndex] = location;
-    }
-  });
-
-  return picks.sort((a, b) => alphaSort(a.name, b.name));
+function isSameBaySelection(left: BaySelection, right: BaySelection) {
+  return (
+    left.zoneIndex === right.zoneIndex &&
+    left.aisle === right.aisle &&
+    left.bay === right.bay
+  );
 }
 
 function buildOverheadRows(
@@ -307,6 +294,40 @@ function buildOverheadPath(config: LayoutConfig, routePattern: RoutePattern) {
   }
 
   return path;
+}
+
+function getBayPhysicalSide(
+  config: LayoutConfig,
+  routePattern: RoutePattern,
+  selection: BaySelection,
+): RouteSide {
+  const direction =
+    routePattern === "serpentine" && selection.aisle % 2 === 0 ? "down" : "up";
+  const rows = buildOverheadRows(config, routePattern, direction);
+  const row = rows.find(
+    ({ leftBay, rightBay }) => leftBay === selection.bay || rightBay === selection.bay,
+  );
+
+  return row?.rightBay === selection.bay ? "right" : "left";
+}
+
+function buildBayPickStops(
+  locations: LocationRecord[],
+  selection: BaySelection,
+) {
+  return locations
+    .filter(
+      (location) =>
+        location.zoneIndex === selection.zoneIndex &&
+        location.aisle === selection.aisle &&
+        location.bay === selection.bay,
+    )
+    .sort(
+      (a, b) =>
+        a.shelfIndex - b.shelfIndex ||
+        a.slot - b.slot ||
+        alphaSort(a.name, b.name),
+    );
 }
 
 function generateLocations(config: LayoutConfig) {
@@ -617,39 +638,6 @@ function RoutePatternSwitch({
   );
 }
 
-function RandomPickControls({
-  pickCount,
-  maxCount,
-  onPickCountChange,
-  onRandomize,
-}: {
-  pickCount: number;
-  maxCount: number;
-  onPickCountChange: (pickCount: number) => void;
-  onRandomize: () => void;
-}) {
-  return (
-    <div className="toolbar-group random-picks-panel">
-      <span className="control-label">Aisle A random picks</span>
-      <label className="number-field compact-number-field">
-        <span>Locations to highlight</span>
-        <input
-          max={Math.max(1, maxCount)}
-          min={1}
-          onChange={(event) =>
-            onPickCountChange(Number.parseInt(event.target.value, 10))
-          }
-          type="number"
-          value={pickCount}
-        />
-      </label>
-      <button className="ghost-action compact-action" onClick={onRandomize} type="button">
-        New random set
-      </button>
-    </div>
-  );
-}
-
 function ViewZoomControls({
   zoom,
   onZoomChange,
@@ -706,7 +694,12 @@ function PlaybackControls({
       </div>
 
       <div className="playback-row">
-        <button className="primary-action compact" onClick={onPlayPause} type="button">
+        <button
+          className="primary-action compact"
+          disabled={total === 0}
+          onClick={onPlayPause}
+          type="button"
+        >
           {isPlaying ? "Pause" : "Play"}
         </button>
         <button className="ghost-action" onClick={onReset} type="button">
@@ -1006,99 +999,153 @@ function OverheadRoute({
   );
 }
 
-function RackBay({
-  bay,
-  active,
+function BaySelectorMap({
   config,
-  indexByName,
-  activeIndex,
-  sideLabel,
+  onSelectBay,
+  routePattern,
+  selectedBay,
+  viewportSize,
 }: {
-  bay: number | null;
-  active: LocationRecord | undefined;
   config: LayoutConfig;
-  indexByName: Map<string, number>;
-  activeIndex: number;
-  sideLabel: RouteSide;
+  onSelectBay: (selection: BaySelection) => void;
+  routePattern: RoutePattern;
+  selectedBay: BaySelection;
+  viewportSize: ViewportSize;
 }) {
-  const shelves = Array.from({ length: config.shelves }, (_, index) => config.shelves - index);
-  const slots = Array.from({ length: config.slots }, (_, index) => config.slots - index);
+  const zones = Array.from({ length: config.zones }, (_, index) => index + 1);
+  const aisles = Array.from({ length: config.aisles }, (_, index) => index + 1);
+  const totalBays = totalBayCount(config);
+  const naturalAisleWidth = 84;
+  const naturalBayRowHeight = 52;
+  const naturalWidth = Math.max(1, config.aisles) * naturalAisleWidth;
+  const naturalZoneHeight =
+    config.bays * naturalBayRowHeight + (config.zones > 1 ? 34 : 0);
+  const naturalHeight =
+    Math.max(1, config.zones) * naturalZoneHeight + Math.max(0, config.zones - 1) * 10;
+  const availableWidth =
+    viewportSize.width < 960
+      ? Math.max(280, viewportSize.width - 76)
+      : Math.max(320, Math.min(720, viewportSize.width * 0.42 - 54));
+  const availableHeight = Math.max(300, viewportSize.height - 330);
+  const selectorScale = Number(
+    Math.min(1, availableWidth / naturalWidth, availableHeight / naturalHeight).toFixed(3),
+  );
+  const selectorStyle = {
+    "--selector-scale": selectorScale,
+    "--selector-height": `${availableHeight}px`,
+  } as CSSProperties;
+
+  const renderBay = (
+    zoneIndex: number,
+    aisle: number,
+    bay: number | null,
+    key: string,
+    side: RouteSide,
+    style: CSSProperties,
+  ) => {
+    if (!bay || bay > totalBays) {
+      return <div className="selector-bay empty" key={key} style={style} />;
+    }
+
+    const selection = { zoneIndex, aisle, bay };
+    const selected = isSameBaySelection(selection, selectedBay);
+
+    return (
+      <button
+        aria-label={baySelectionLabel(selection)}
+        aria-pressed={selected}
+        className={`selector-bay ${side} ${selected ? "selected" : ""}`}
+        data-bay-selector={baySelectionName(selection)}
+        key={key}
+        onClick={() => onSelectBay(selection)}
+        style={style}
+        type="button"
+      >
+        <span>{pad2(bay)}</span>
+      </button>
+    );
+  };
 
   return (
-    <div className={`rack-bay side-${sideLabel} ${bay === active?.bay ? "active-bay" : ""}`}>
-      <div className="rack-title">
-        <span>{bay ? `Bay ${pad2(bay)}` : "No bay"}</span>
-        <strong>{sideLabel}</strong>
+    <div className="bay-selector-card">
+      <div className="bay-card-heading">
+        <span className="control-label">Overhead selector</span>
+        <strong>{baySelectionName(selectedBay)}</strong>
       </div>
-      <div
-        className="shelf-stack"
-        style={{ gridTemplateColumns: `repeat(${config.shelves}, minmax(16px, 20px))` }}
-      >
-        {shelves.map((shelf) => (
-          <div className="shelf-row" key={`${bay}-${shelf}`}>
-            <span className="shelf-label">{lettersFromNumber(shelf)}</span>
-            <div
-              className="slot-grid"
-              style={{ gridTemplateRows: `repeat(${config.slots}, minmax(10px, 18px))` }}
-            >
-              {slots.map((slot) => {
-                const name =
-                  active && bay
-                    ? locationName(active.zoneIndex, active.aisle, bay, shelf, slot)
-                    : "";
-                const coordinate =
-                  active && bay
-                    ? pickCoordinateKey(active.zoneIndex, active.aisle, bay, shelf, slot)
-                    : "";
-                const stepIndex = indexByName.get(coordinate);
-                const isActive = active
-                  ? coordinate ===
-                    pickCoordinateKey(
-                      active.zoneIndex,
-                      active.aisle,
-                      active.bay,
-                      active.shelfIndex,
-                      active.slot,
-                    )
-                  : false;
-                const isDone = typeof stepIndex === "number" && stepIndex < activeIndex;
-                const isPlanned = typeof stepIndex === "number";
+      <div className="bay-selector-viewport" style={selectorStyle}>
+        <div className="bay-selector-zoom-surface">
+          <div className="bay-selector-outline">
+            {zones.map((zone) => {
+              const zoneLabel = pad2(zone);
 
-                return (
+              return (
+                <div className="selector-zone" key={zone}>
+                  {config.zones > 1 && <div className="zone-label">Zone {zoneLabel}</div>}
                   <div
-                    className={`slot ${isPlanned ? "planned" : "unplanned"} ${
-                      isActive ? "active" : ""
-                    } ${isDone ? "done" : ""}`}
-                    key={`${bay}-${shelf}-${slot}`}
-                    title={name}
+                    className="selector-route-grid"
+                    style={{ gridTemplateColumns: `repeat(${config.aisles}, max-content)` }}
                   >
-                    <span className="slot-number">{pad2(slot)}</span>
-                    {isActive && <span aria-hidden="true" className="slot-pick-item" />}
+                    {aisles.map((aisle) => {
+                      const direction =
+                        routePattern === "serpentine" && aisle % 2 === 0 ? "down" : "up";
+                      const rows = buildOverheadRows(config, routePattern, direction);
+                      const aislePrefix = `${zoneLabel}${lettersFromNumber(aisle)}`;
+
+                      return (
+                        <div className="selector-aisle" key={`${zone}-${aisle}`}>
+                          <div
+                            className="selector-bay-stack"
+                            style={
+                              {
+                                gridTemplateRows: `repeat(${rows.length}, minmax(46px, 1fr))`,
+                              } as CSSProperties
+                            }
+                          >
+                            <div
+                              className="selector-aisle-track"
+                              style={{ gridRow: `1 / span ${rows.length}` }}
+                            >
+                              <strong>{aislePrefix}</strong>
+                            </div>
+                            {rows.flatMap(({ leftBay, rightBay }, rowIndex) => [
+                              renderBay(zone, aisle, leftBay, `${zone}-${aisle}-${rowIndex}-left`, "left", {
+                                gridColumn: 1,
+                                gridRow: rowIndex + 1,
+                              }),
+                              renderBay(zone, aisle, rightBay, `${zone}-${aisle}-${rowIndex}-right`, "right", {
+                                gridColumn: 3,
+                                gridRow: rowIndex + 1,
+                              }),
+                            ])}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
-            </div>
+                </div>
+              );
+            })}
           </div>
-        ))}
+        </div>
       </div>
     </div>
   );
 }
 
-function AislePickView({
-  locations,
-  activeIndex,
+function BayFaceView({
   active,
-  controls,
+  activeIndex,
   config,
-  speedMs,
+  locations,
+  selectedBay,
+  side,
 }: {
-  locations: LocationRecord[];
-  activeIndex: number;
   active: LocationRecord | undefined;
-  controls: ReactNode;
+  activeIndex: number;
   config: LayoutConfig;
-  speedMs: number;
+  locations: LocationRecord[];
+  selectedBay: BaySelection;
+  side: RouteSide;
 }) {
   const indexByName = useMemo(() => {
     const map = new Map<string, number>();
@@ -1116,10 +1163,124 @@ function AislePickView({
     );
     return map;
   }, [locations]);
+  const shelves = Array.from(
+    { length: config.shelves },
+    (_, index) => config.shelves - index,
+  );
+  const slots = Array.from({ length: config.slots }, (_, index) => index + 1);
+  const visualSlots = side === "right" ? [...slots].reverse() : slots;
+  const activeCoordinate = active
+    ? pickCoordinateKey(
+        active.zoneIndex,
+        active.aisle,
+        active.bay,
+        active.shelfIndex,
+        active.slot,
+      )
+    : "";
 
-  const activeRouteSide = active && active.bay % 2 === 0 ? "right" : "left";
-  const activeVertical = active && active.bay > 2 ? "top" : "bottom";
-  const aisleLabel = active ? `${active.zoneLabel}${active.aisleLabel}` : "01A";
+  const rack = (
+    <div className={`bay-face-rack side-${side}`}>
+      <div
+        className="bay-face-grid"
+        style={{
+          gridTemplateRows: `repeat(${config.shelves}, minmax(58px, 1fr))`,
+        }}
+      >
+        {shelves.map((shelf) => (
+          <div className="bay-face-shelf" key={`${selectedBay.bay}-${shelf}`}>
+            <span className="bay-face-shelf-label">{lettersFromNumber(shelf)}</span>
+            <div
+              className="bay-face-slot-row"
+              style={{ gridTemplateColumns: `repeat(${config.slots}, minmax(54px, 1fr))` }}
+            >
+              {visualSlots.map((slot) => {
+                const name = locationName(
+                  selectedBay.zoneIndex,
+                  selectedBay.aisle,
+                  selectedBay.bay,
+                  shelf,
+                  slot,
+                );
+                const coordinate = pickCoordinateKey(
+                  selectedBay.zoneIndex,
+                  selectedBay.aisle,
+                  selectedBay.bay,
+                  shelf,
+                  slot,
+                );
+                const stepIndex = indexByName.get(coordinate);
+                const isActive = coordinate === activeCoordinate;
+                const isDone = typeof stepIndex === "number" && stepIndex < activeIndex;
+                const isPlanned = typeof stepIndex === "number";
+
+                return (
+                  <div
+                    className={`bay-face-slot ${isPlanned ? "planned" : "unplanned"} ${
+                      isActive ? "active" : ""
+                    } ${isDone ? "done" : ""}`}
+                    key={coordinate}
+                    title={name}
+                  >
+                    <span>{pad2(slot)}</span>
+                    {isActive && <span aria-hidden="true" className="bay-pick-item" />}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  const picker = (
+    <div className="bay-picker-stand">
+      <div className="bay-picker-marker">
+        <span>Picker</span>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className={`bay-face-card side-${side}`}>
+      <div className="bay-card-heading">
+        <span className="control-label">Picker view</span>
+        <strong>{active?.name ?? baySelectionName(selectedBay)}</strong>
+      </div>
+      <div className={`bay-face-stage side-${side}`}>
+        {side === "right" && picker}
+        {rack}
+        {side === "left" && picker}
+      </div>
+    </div>
+  );
+}
+
+function AisleBayInspector({
+  active,
+  activeIndex,
+  controls,
+  config,
+  locations,
+  onSelectBay,
+  routePattern,
+  selectedBay,
+  speedMs,
+  viewportSize,
+}: {
+  active: LocationRecord | undefined;
+  activeIndex: number;
+  controls: ReactNode;
+  config: LayoutConfig;
+  locations: LocationRecord[];
+  onSelectBay: (selection: BaySelection) => void;
+  routePattern: RoutePattern;
+  selectedBay: BaySelection;
+  speedMs: number;
+  viewportSize: ViewportSize;
+}) {
+  const side = getBayPhysicalSide(config, routePattern, selectedBay);
   const simulationStyle = {
     "--glide-ms": `${speedMs}ms`,
   } as CSSProperties;
@@ -1129,111 +1290,27 @@ function AislePickView({
       <div className="panel-heading">
         <div>
           <p className="eyebrow">Aisle simulation</p>
-          <h2>{aisleLabel}</h2>
+          <h2>{baySelectionLabel(selectedBay)}</h2>
         </div>
-        <span className="small-badge">
-          {active?.name ?? "No active pick"}
-        </span>
+        <span className="small-badge">{side} side</span>
       </div>
       {controls}
-
-      <div className="aisle-demo-layout">
-        <div className="aisle-demo-rack bay-03">
-          <RackBay
-            active={active}
-            activeIndex={activeIndex}
-            bay={3}
-            config={config}
-            indexByName={indexByName}
-            sideLabel="left"
-          />
-        </div>
-
-        <div className={`aisle-demo-lane ${activeRouteSide} ${activeVertical}`}>
-          <div className="aisle-demo-label">
-            <strong>{aisleLabel}</strong>
-          </div>
-          <div className={`picker-reach ${activeRouteSide}`} />
-          <div className="picker-marker">
-            <span>Picker</span>
-          </div>
-          <div className="lane-line" />
-        </div>
-
-        <div className="aisle-demo-rack bay-04">
-          <RackBay
-            active={active}
-            activeIndex={activeIndex}
-            bay={4}
-            config={config}
-            indexByName={indexByName}
-            sideLabel="right"
-          />
-        </div>
-
-        <div className="aisle-demo-rack bay-01">
-          <RackBay
-            active={active}
-            activeIndex={activeIndex}
-            bay={1}
-            config={config}
-            indexByName={indexByName}
-            sideLabel="left"
-          />
-        </div>
-
-        <div className="aisle-demo-rack bay-02">
-          <RackBay
-            active={active}
-            activeIndex={activeIndex}
-            bay={2}
-            config={config}
-            indexByName={indexByName}
-            sideLabel="right"
-          />
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function RouteTimeline({
-  locations,
-  activeIndex,
-  onSelect,
-}: {
-  locations: LocationRecord[];
-  activeIndex: number;
-  onSelect: (index: number) => void;
-}) {
-  const start = Math.max(0, activeIndex - 8);
-  const visible = locations.slice(start, activeIndex + 18);
-
-  return (
-    <section className="panel timeline-panel">
-      <div className="panel-heading">
-        <div>
-          <p className="eyebrow">Pick sequence</p>
-          <h2>{locations.length.toLocaleString()} highlighted picks</h2>
-        </div>
-      </div>
-      <div className="timeline-list">
-        {visible.map((location, index) => {
-          const routeIndex = start + index;
-          return (
-            <button
-              className={`route-step ${routeIndex === activeIndex ? "active" : ""} ${
-                routeIndex < activeIndex ? "done" : ""
-              }`}
-              key={`${location.name}-${routeIndex}`}
-              onClick={() => onSelect(routeIndex)}
-              type="button"
-            >
-              <strong>{location.name}</strong>
-              <em>{location.side}</em>
-            </button>
-          );
-        })}
+      <div className="aisle-inspector-grid">
+        <BaySelectorMap
+          config={config}
+          onSelectBay={onSelectBay}
+          routePattern={routePattern}
+          selectedBay={selectedBay}
+          viewportSize={viewportSize}
+        />
+        <BayFaceView
+          active={active}
+          activeIndex={activeIndex}
+          config={config}
+          locations={locations}
+          selectedBay={selectedBay}
+          side={side}
+        />
       </div>
     </section>
   );
@@ -1400,8 +1477,11 @@ export default function Home() {
   const [analysis, setAnalysis] = useState<UploadAnalysis | null>(null);
   const [mode, setMode] = useState<SourceMode>("generated");
   const [routePattern, setRoutePattern] = useState<RoutePattern>("serpentine");
-  const [randomPickCount, setRandomPickCount] = useState(8);
-  const [randomPickSeed, setRandomPickSeed] = useState(1);
+  const [selectedBay, setSelectedBay] = useState<BaySelection>({
+    zoneIndex: 1,
+    aisle: 1,
+    bay: 1,
+  });
   const [overheadZoom, setOverheadZoom] = useState(1);
   const [viewportSize, setViewportSize] = useState<ViewportSize>({
     width: 1280,
@@ -1418,50 +1498,42 @@ export default function Home() {
     mode === "uploaded" && uploadedLocations.length > 0
       ? analysis?.inferredConfig ?? config
       : config;
-  const aisleSourceLocations = useMemo(
-    () =>
-      activeLocations.filter(
-        (location) =>
-          location.zoneIndex === 1 &&
-          location.aisle === 1 &&
-          location.bay >= 1 &&
-          location.bay <= 4,
-      ),
-    [activeLocations],
-  );
-  const effectiveRandomPickCount = clampNumber(
-    randomPickCount,
-    1,
-    Math.max(1, aisleSourceLocations.length),
+  const normalizedSelectedBay = useMemo(
+    () => ({
+      zoneIndex: clampNumber(selectedBay.zoneIndex, 1, activeConfig.zones),
+      aisle: clampNumber(selectedBay.aisle, 1, activeConfig.aisles),
+      bay: clampNumber(selectedBay.bay, 1, totalBayCount(activeConfig)),
+    }),
+    [
+      activeConfig,
+      selectedBay.aisle,
+      selectedBay.bay,
+      selectedBay.zoneIndex,
+    ],
   );
   const overheadPath = useMemo(
     () => buildOverheadPath(activeConfig, routePattern),
     [activeConfig, routePattern],
   );
-  const aislePickStops = useMemo(
-    () =>
-      buildRandomPickStops(
-        aisleSourceLocations,
-        effectiveRandomPickCount,
-        randomPickSeed,
-      ),
-    [aisleSourceLocations, effectiveRandomPickCount, randomPickSeed],
+  const selectedBayPickStops = useMemo(
+    () => buildBayPickStops(activeLocations, normalizedSelectedBay),
+    [activeLocations, normalizedSelectedBay],
   );
   const isSimulatorPage = activePage === "overhead" || activePage === "aisle";
   const simulationTotal =
-    activePage === "overhead" ? overheadPath.length : aislePickStops.length;
+    activePage === "overhead" ? overheadPath.length : selectedBayPickStops.length;
   const safeActiveIndex = Math.min(
     activeIndex,
     Math.max(0, simulationTotal - 1),
   );
   const activePathStop = overheadPath[safeActiveIndex];
-  const activePick = aislePickStops[safeActiveIndex];
+  const activePick = selectedBayPickStops[safeActiveIndex];
   const activeLabel =
     activePage === "overhead"
       ? activePathStop
         ? `Walking ${activePathStop.zoneLabel}${activePathStop.aisleLabel}`
         : "Walking route"
-      : activePick?.name ?? "No active pick";
+      : activePick?.name ?? `${baySelectionName(normalizedSelectedBay)} sequence`;
   const csv = useMemo(() => buildShipHeroCsv(activeLocations), [activeLocations]);
   const canUseUploaded = uploadedLocations.length > 0;
 
@@ -1523,16 +1595,8 @@ export default function Home() {
     setIsPlaying(false);
   };
 
-  const updateRandomPickCount = (value: number) => {
-    setRandomPickCount(
-      clampNumber(value, 1, Math.max(1, aisleSourceLocations.length)),
-    );
-    setActiveIndex(0);
-    setIsPlaying(false);
-  };
-
-  const randomizePickStops = () => {
-    setRandomPickSeed((seed) => seed + 1);
+  const selectBay = (selection: BaySelection) => {
+    setSelectedBay(selection);
     setActiveIndex(0);
     setIsPlaying(false);
   };
@@ -1580,38 +1644,32 @@ export default function Home() {
     />
   );
   const simulationControls = ({
-    showRandomPickControls,
     showRoutePattern,
     showZoomControls,
   }: {
-    showRandomPickControls: boolean;
     showRoutePattern: boolean;
     showZoomControls: boolean;
-  }) => (
-    <div className="simulation-controls">
-      {showRoutePattern && (
-        <RoutePatternSwitch
-          onChange={selectRoutePattern}
-          routePattern={routePattern}
-        />
-      )}
-      {showZoomControls && (
-        <ViewZoomControls
-          onZoomChange={setOverheadZoom}
-          zoom={overheadZoom}
-        />
-      )}
-      {showRandomPickControls && (
-        <RandomPickControls
-          maxCount={aisleSourceLocations.length}
-          onPickCountChange={updateRandomPickCount}
-          onRandomize={randomizePickStops}
-          pickCount={effectiveRandomPickCount}
-        />
-      )}
-      {playbackControls}
-    </div>
-  );
+  }) => {
+    const isPlaybackOnly = !showRoutePattern && !showZoomControls;
+
+    return (
+      <div className={`simulation-controls ${isPlaybackOnly ? "playback-only" : ""}`}>
+        {showRoutePattern && (
+          <RoutePatternSwitch
+            onChange={selectRoutePattern}
+            routePattern={routePattern}
+          />
+        )}
+        {showZoomControls && (
+          <ViewZoomControls
+            onZoomChange={setOverheadZoom}
+            zoom={overheadZoom}
+          />
+        )}
+        {playbackControls}
+      </div>
+    );
+  };
 
   return (
     <main className="app-shell">
@@ -1650,7 +1708,6 @@ export default function Home() {
             <OverheadRoute
               activeIndex={safeActiveIndex}
               controls={simulationControls({
-                showRandomPickControls: false,
                 showRoutePattern: true,
                 showZoomControls: true,
               })}
@@ -1668,22 +1725,20 @@ export default function Home() {
       {activePage === "aisle" && (
         <div className="simulation-grid">
           <div className="simulation-main">
-            <AislePickView
+            <AisleBayInspector
               active={activePick}
               activeIndex={safeActiveIndex}
               controls={simulationControls({
-                showRandomPickControls: true,
                 showRoutePattern: false,
                 showZoomControls: false,
               })}
               config={activeConfig}
-              locations={aislePickStops}
+              locations={selectedBayPickStops}
+              onSelectBay={selectBay}
+              routePattern={routePattern}
+              selectedBay={normalizedSelectedBay}
               speedMs={speedMs}
-            />
-            <RouteTimeline
-              activeIndex={safeActiveIndex}
-              locations={aislePickStops}
-              onSelect={setActiveIndex}
+              viewportSize={viewportSize}
             />
           </div>
         </div>
