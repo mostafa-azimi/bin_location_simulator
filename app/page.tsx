@@ -527,25 +527,11 @@ function CreatePage({
 }) {
   return (
     <div className="page-grid create-grid">
-      <section className="panel hero-panel">
-        <p className="eyebrow">Location generator</p>
-        <h2>Build the bin naming pattern before simulating the route.</h2>
-        <div className="summary-band">
-          <Stat label="Generated rows" value={generatedLocations.length.toLocaleString()} />
-          <Stat label="First location" value={generatedLocations[0]?.name ?? "-"} />
-          <Stat
-            label="Last location"
-            value={generatedLocations[generatedLocations.length - 1]?.name ?? "-"}
-          />
-          <Stat label="Active source" value={mode === "uploaded" ? "Uploaded CSV" : "Generated"} />
-        </div>
-      </section>
-
-      <section className="panel">
+      <section className="panel input-panel">
         <div className="panel-heading">
           <div>
             <p className="eyebrow">Warehouse dimensions</p>
-            <h2>Inputs</h2>
+            <h2>Create bin locations</h2>
           </div>
         </div>
         <div className="input-grid wide">
@@ -578,6 +564,26 @@ function CreatePage({
           mode={mode}
           onChange={onSourceChange}
         />
+      </section>
+
+      <section className="panel generated-reference-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Generated reference</p>
+            <h2>Current layout</h2>
+          </div>
+        </div>
+        <div className="summary-band">
+          <Stat
+            label="Generated bin locations"
+            value={generatedLocations.length.toLocaleString()}
+          />
+          <Stat label="First location" value={generatedLocations[0]?.name ?? "-"} />
+          <Stat
+            label="Last location"
+            value={generatedLocations[generatedLocations.length - 1]?.name ?? "-"}
+          />
+        </div>
       </section>
     </div>
   );
@@ -1057,10 +1063,13 @@ function OutputPage({
           </div>
         </div>
         <div className="summary-band stacked">
-          <Stat label="Generated rows" value={generatedLocations.length.toLocaleString()} />
-          <Stat label="Generated first" value={generatedLocations[0]?.name ?? "-"} />
           <Stat
-            label="Generated last"
+            label="Generated bin locations"
+            value={generatedLocations.length.toLocaleString()}
+          />
+          <Stat label="First location" value={generatedLocations[0]?.name ?? "-"} />
+          <Stat
+            label="Last location"
             value={generatedLocations[generatedLocations.length - 1]?.name ?? "-"}
           />
         </div>
@@ -1186,16 +1195,6 @@ export default function Home() {
         </div>
         <PageTabs activePage={activePage} onChange={setActivePage} />
       </header>
-
-      <section className="summary-band top-summary">
-        <Stat label="Mode" value={mode === "uploaded" ? "Uploaded CSV" : "Generated"} />
-        <Stat label="Route starts" value={routeStops[0]?.name ?? "-"} />
-        <Stat
-          label="Route ends"
-          value={routeStops[routeStops.length - 1]?.name ?? "-"}
-        />
-        <Stat label="Current pick" value={active?.name ?? "-"} />
-      </section>
 
       {activePage === "create" && (
         <CreatePage

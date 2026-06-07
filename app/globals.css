@@ -135,15 +135,10 @@ button:disabled {
   color: var(--foreground);
 }
 
-.top-summary,
 .page-grid,
 .simulation-grid {
   margin: 0 auto;
   max-width: 1680px;
-}
-
-.top-summary {
-  margin-bottom: 14px;
 }
 
 .page-grid {
@@ -152,11 +147,16 @@ button:disabled {
 }
 
 .create-grid {
-  grid-template-columns: minmax(0, 1.3fr) minmax(340px, 0.8fr);
+  grid-template-columns: 1fr;
 }
 
-.create-grid .hero-panel {
+.create-grid .input-panel,
+.create-grid .generated-reference-panel {
   grid-column: 1 / -1;
+}
+
+.generated-reference-panel .summary-band {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .output-grid {
