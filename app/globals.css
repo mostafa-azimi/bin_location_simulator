@@ -510,7 +510,7 @@ button:disabled {
 .route-grid {
   align-items: stretch;
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .warehouse-aisle {
@@ -557,12 +557,10 @@ button:disabled {
   min-height: 0;
 }
 
-.route-pair {
-  align-items: stretch;
-  display: grid;
-  gap: 6px;
-  grid-template-columns: minmax(54px, 1fr) 38px minmax(54px, 1fr);
-  min-height: 42px;
+.continuous-route-stack {
+  grid-template-columns: 42px 32px 42px;
+  justify-content: center;
+  position: relative;
 }
 
 .warehouse-bay {
@@ -573,16 +571,19 @@ button:disabled {
   color: var(--ink-soft);
   display: flex;
   justify-content: center;
-  min-height: 38px;
-  padding: 6px;
+  min-height: 72px;
+  min-width: 38px;
+  padding: 5px 3px;
   text-align: center;
   transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+  z-index: 1;
 }
 
 .warehouse-bay span {
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 760;
   line-height: 1.15;
+  overflow-wrap: anywhere;
 }
 
 .warehouse-bay.empty {
@@ -612,6 +613,13 @@ button:disabled {
   justify-content: center;
   overflow: hidden;
   position: relative;
+}
+
+.continuous-aisle-track {
+  grid-column: 2;
+  min-height: 100%;
+  overflow: visible;
+  z-index: 2;
 }
 
 .aisle-track::before {
@@ -678,12 +686,12 @@ button:disabled {
   z-index: 6;
 }
 
-.aisle-track.up.active .overhead-picker {
-  animation: pickerGlideUp var(--glide-ms, 600ms) linear both;
-}
-
-.aisle-track.down.active .overhead-picker {
-  animation: pickerGlideDown var(--glide-ms, 600ms) linear both;
+.continuous-aisle-track .overhead-picker {
+  left: 50%;
+  position: absolute;
+  top: var(--picker-top, 50%);
+  transform: translate(-50%, -50%);
+  transition: top var(--glide-ms, 600ms) linear;
 }
 
 .overhead-picker span {

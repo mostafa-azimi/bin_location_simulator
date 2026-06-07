@@ -812,13 +812,18 @@ function OverheadRoute({
   const simulationStyle = {
     "--glide-ms": `${speedMs}ms`,
   } as CSSProperties;
-  const renderBay = (bay: number | null) =>
+  const renderBay = (
+    bay: number | null,
+    key: string,
+    className: string,
+    style: CSSProperties,
+  ) =>
     bay && bay <= config.bays ? (
-      <div className="warehouse-bay">
+      <div className={`warehouse-bay ${className}`} key={key} style={style}>
         <span>Bay {pad2(bay)}</span>
       </div>
     ) : (
-      <div className="warehouse-bay empty" />
+      <div className={`warehouse-bay empty ${className}`} key={key} style={style} />
     );
 
   return (
@@ -852,52 +857,82 @@ function OverheadRoute({
                     const direction =
                       routePattern === "serpentine" && aisle % 2 === 0 ? "down" : "up";
                     const rows = buildOverheadRows(config, routePattern, direction);
+                    const rowKeys = rows.map(({ leftBay, rightBay }) =>
+                      overheadRowKey(zone, aisle, leftBay, rightBay),
+                    );
+                    const activeRowIndex = rows.findIndex(
+                      ({ leftBay, rightBay }) =>
+                        activePathStop?.rowKey ===
+                        overheadRowKey(zone, aisle, leftBay, rightBay),
+                    );
+                    const isActiveAisle =
+                      activeZoneIndex === zone && activePathStop?.aisle === aisle;
+                    const activeTrackDirection =
+                      isActiveAisle && activePathStop
+                        ? activePathStop.trackDirection
+                        : routePattern === "u-shape"
+                          ? "u-path"
+                          : direction;
+                    const completedAisle =
+                      rowKeys.length > 0 && rowKeys.every((rowKey) => visitedRows.has(rowKey));
+                    const pickerTop =
+                      activeRowIndex >= 0
+                        ? `${((activeRowIndex + 0.5) / rows.length) * 100}%`
+                        : direction === "up"
+                          ? "100%"
+                          : "0%";
 
                     return (
                       <div
                         className={`warehouse-aisle route-aisle ${routePattern} ${direction}`}
                         key={aisle}
                       >
-                        <div className="aisle-track-label">
-                          <strong>{zoneLabel}{aisleLabel}</strong>
-                        </div>
-
                         <div
-                          className="route-bay-stack"
-                          style={{ gridTemplateRows: `repeat(${rows.length}, minmax(42px, 1fr))` }}
+                          className="route-bay-stack continuous-route-stack"
+                          style={
+                            {
+                              "--picker-top": pickerTop,
+                              gridTemplateRows: `repeat(${rows.length}, minmax(72px, 1fr))`,
+                            } as CSSProperties
+                          }
                         >
-                          {rows.map(({ leftBay, rightBay }) => {
+                          <div
+                            className={`aisle-track continuous-aisle-track ${activeTrackDirection} ${
+                              isActiveAisle ? "active" : ""
+                            } ${completedAisle ? "done" : ""}`}
+                            style={{ gridRow: `1 / span ${rows.length}` }}
+                          >
+                            <div className="aisle-track-label">
+                              <strong>{zoneLabel}{aisleLabel}</strong>
+                            </div>
+                            {isActiveAisle && (
+                              <div className="overhead-picker">
+                                <span>Picker</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {rows.flatMap(({ leftBay, rightBay }, rowIndex) => {
                             const rowKey = overheadRowKey(zone, aisle, leftBay, rightBay);
                             const isActivePair =
                               activeZoneIndex === zone && activePathStop?.rowKey === rowKey;
                             const isDonePair = visitedRows.has(rowKey);
-                            const trackDirection =
-                              isActivePair && activePathStop
-                                ? activePathStop.trackDirection
-                                : routePattern === "u-shape"
-                                  ? "u-path"
-                                  : direction;
+                            const bayStateClass = isActivePair
+                              ? "active"
+                              : isDonePair
+                                ? "done"
+                                : "";
 
-                            return (
-                              <div
-                                className={`route-pair ${isActivePair ? "active-pair" : ""}`}
-                                key={`${aisle}-${leftBay ?? "empty"}-${rightBay ?? "empty"}`}
-                              >
-                                {renderBay(leftBay)}
-                                <div
-                                  className={`aisle-track ${trackDirection} ${
-                                    isActivePair ? "active" : ""
-                                  } ${isDonePair ? "done" : ""}`}
-                                >
-                                  {isActivePair && (
-                                    <div className="overhead-picker">
-                                      <span>Picker</span>
-                                    </div>
-                                  )}
-                                </div>
-                                {renderBay(rightBay)}
-                              </div>
-                            );
+                            return [
+                              renderBay(leftBay, `${rowKey}-left`, bayStateClass, {
+                                gridColumn: 1,
+                                gridRow: rowIndex + 1,
+                              }),
+                              renderBay(rightBay, `${rowKey}-right`, bayStateClass, {
+                                gridColumn: 3,
+                                gridRow: rowIndex + 1,
+                              }),
+                            ];
                           })}
                         </div>
                       </div>
