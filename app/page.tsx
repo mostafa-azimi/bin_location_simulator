@@ -108,7 +108,7 @@ function locationName(
   shelfIndex: number,
   slot: number,
 ) {
-  return `${pad2(zoneIndex)}${lettersFromNumber(aisle).toLowerCase()}-${pad2(
+  return `${pad2(zoneIndex)}${lettersFromNumber(aisle)}-${pad2(
     bay,
   )}-${lettersFromNumber(shelfIndex)}-${pad2(slot)}`;
 }
@@ -142,7 +142,7 @@ function parseLocationName(name: string, originalIndex: number): LocationRecord 
     name: cleanName,
     zoneLabel: pad2(zoneIndex),
     zoneIndex,
-    aisleLabel: aisleRaw.toLowerCase(),
+    aisleLabel: aisleRaw.toUpperCase(),
     aisle,
     bay,
     shelfLabel: shelfLabelRaw.toUpperCase(),
@@ -153,6 +153,35 @@ function parseLocationName(name: string, originalIndex: number): LocationRecord 
     zeroPadded: zoneRaw.length >= 2 && bayRaw.length >= 2 && slotRaw.length >= 2,
     usesTargetPrefix,
   };
+}
+
+function bayRouteKey(location: LocationRecord) {
+  return `${location.zoneIndex}-${location.aisle}-${location.bay}`;
+}
+
+function pickCoordinateKey(
+  zoneIndex: number,
+  aisle: number,
+  bay: number,
+  shelfIndex: number,
+  slot: number,
+) {
+  return `${zoneIndex}-${aisle}-${bay}-${shelfIndex}-${slot}`;
+}
+
+function buildHighlightedStops(locations: LocationRecord[]) {
+  const seenBays = new Set<string>();
+
+  return locations.filter((location) => {
+    const key = bayRouteKey(location);
+
+    if (seenBays.has(key)) {
+      return false;
+    }
+
+    seenBays.add(key);
+    return true;
+  });
 }
 
 function generateLocations(config: LayoutConfig) {
@@ -455,7 +484,7 @@ function PlaybackControls({
       </div>
 
       <label className="range-field">
-        <span>Route step</span>
+        <span>Route position</span>
         <input
           max={Math.max(0, total - 1)}
           min={0}
@@ -567,7 +596,7 @@ function OverheadRoute({
 }) {
   const activeZoneIndex = active?.zoneIndex ?? 1;
   const activeZone = active?.zoneLabel ?? "01";
-  const firstStepByBay = useMemo(() => {
+  const stopIndexByBay = useMemo(() => {
     const steps = new Map<string, number>();
 
     locations.forEach((location, index) => {
@@ -575,10 +604,7 @@ function OverheadRoute({
         return;
       }
 
-      const key = `${location.aisle}-${location.bay}`;
-      if (!steps.has(key)) {
-        steps.set(key, index);
-      }
+      steps.set(`${location.aisle}-${location.bay}`, index);
     });
 
     return steps;
@@ -592,11 +618,14 @@ function OverheadRoute({
   }));
 
   const bayClassName = (aisle: number, bay: number) => {
-    const step = firstStepByBay.get(`${aisle}-${bay}`);
+    const step = stopIndexByBay.get(`${aisle}-${bay}`);
     const isActive = active?.aisle === aisle && active.bay === bay;
+    const isPlanned = typeof step === "number";
     const isDone = typeof step === "number" && activeIndex > step;
 
-    return `warehouse-bay ${isActive ? "active" : ""} ${isDone ? "done" : ""}`;
+    return `warehouse-bay ${isPlanned ? "planned" : ""} ${
+      isActive ? "active" : ""
+    } ${isDone ? "done" : ""}`;
   };
 
   return (
@@ -606,55 +635,80 @@ function OverheadRoute({
           <p className="eyebrow">Overhead simulation</p>
           <h2>Zone {activeZone}</h2>
         </div>
-        <span className="small-badge">Alphanumeric route</span>
+        <span className="small-badge">Serpentine path</span>
       </div>
 
       <div className="warehouse-scroll">
-        <div className="warehouse-outline">
-          {aisles.map((aisle) => (
-            <div className="warehouse-aisle" key={aisle}>
-              <div
-                className="warehouse-row top-row"
-                style={{ gridTemplateColumns: `repeat(${pairCount}, minmax(118px, 1fr))` }}
-              >
-                {pairs.map(({ odd }) => {
-                  const step = firstStepByBay.get(`${aisle}-${odd}`);
-                  return (
-                    <div className={bayClassName(aisle, odd)} key={`${aisle}-${odd}`}>
-                      <span>Bay {pad2(odd)}</span>
-                      <strong>{step !== undefined ? `Step ${step + 1}` : "-"}</strong>
-                    </div>
-                  );
-                })}
-              </div>
+        <div className="warehouse-outline serpentine-outline">
+          <div
+            className="serpentine-grid"
+            style={{ gridTemplateColumns: `repeat(${config.aisles}, minmax(164px, 1fr))` }}
+          >
+            {aisles.map((aisle) => {
+              const aisleLabel = lettersFromNumber(aisle);
+              const direction = aisle % 2 === 1 ? "up" : "down";
+              const physicalPairs = direction === "up" ? [...pairs].reverse() : pairs;
 
-              <div className="warehouse-corridor">
-                <div className="corridor-line" />
-                <strong>{activeZone}{lettersFromNumber(aisle).toLowerCase()}</strong>
-                <span>Aisle {lettersFromNumber(aisle).toLowerCase()}</span>
-              </div>
+              return (
+                <div className={`warehouse-aisle serpentine-aisle ${direction}`} key={aisle}>
+                  <div className="aisle-header">
+                    <strong>{activeZone}{aisleLabel}</strong>
+                    <span>Aisle {aisleLabel}</span>
+                  </div>
 
-              <div
-                className="warehouse-row bottom-row"
-                style={{ gridTemplateColumns: `repeat(${pairCount}, minmax(118px, 1fr))` }}
-              >
-                {pairs.map(({ even }) =>
-                  even <= config.bays ? (
-                    <div className={bayClassName(aisle, even)} key={`${aisle}-${even}`}>
-                      <span>Bay {pad2(even)}</span>
-                      <strong>
-                        {firstStepByBay.get(`${aisle}-${even}`) !== undefined
-                          ? `Step ${Number(firstStepByBay.get(`${aisle}-${even}`)) + 1}`
-                          : "-"}
-                      </strong>
-                    </div>
-                  ) : (
-                    <div className="warehouse-bay empty" key={`${aisle}-empty`} />
-                  ),
-                )}
-              </div>
-            </div>
-          ))}
+                  <div
+                    className="serpentine-bay-stack"
+                    style={{ gridTemplateRows: `repeat(${pairCount}, minmax(72px, 1fr))` }}
+                  >
+                    {physicalPairs.map(({ odd, even }) => {
+                      const oddStep = stopIndexByBay.get(`${aisle}-${odd}`);
+                      const evenStep = stopIndexByBay.get(`${aisle}-${even}`);
+                      const plannedSteps = [oddStep, evenStep].filter(
+                        (step): step is number => typeof step === "number",
+                      );
+                      const isActivePair =
+                        active?.aisle === aisle && (active.bay === odd || active.bay === even);
+                      const isDonePair =
+                        plannedSteps.length > 0 &&
+                        plannedSteps.every((step) => activeIndex > step);
+
+                      return (
+                        <div
+                          className={`serpentine-pair ${isActivePair ? "active-pair" : ""}`}
+                          key={`${aisle}-${odd}-${even}`}
+                        >
+                          <div className={bayClassName(aisle, odd)}>
+                            <span>Bay {pad2(odd)}</span>
+                          </div>
+                          <div
+                            className={`aisle-track ${direction} ${
+                              isActivePair ? "active" : ""
+                            } ${isDonePair ? "done" : ""}`}
+                          >
+                            {isActivePair && (
+                              <>
+                                <div className={`pick-tether ${active?.side ?? "left"}`} />
+                                <div className="overhead-picker">
+                                  <span>Picker</span>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                          {even <= config.bays ? (
+                            <div className={bayClassName(aisle, even)}>
+                              <span>Bay {pad2(even)}</span>
+                            </div>
+                          ) : (
+                            <div className="warehouse-bay empty" />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     </section>
@@ -696,14 +750,27 @@ function RackBay({
                   active && bay
                     ? locationName(active.zoneIndex, active.aisle, bay, shelf, slot)
                     : "";
-                const stepIndex = indexByName.get(name);
-                const isActive = active?.name === name;
+                const coordinate =
+                  active && bay
+                    ? pickCoordinateKey(active.zoneIndex, active.aisle, bay, shelf, slot)
+                    : "";
+                const stepIndex = indexByName.get(coordinate);
+                const isActive = active
+                  ? coordinate ===
+                    pickCoordinateKey(
+                      active.zoneIndex,
+                      active.aisle,
+                      active.bay,
+                      active.shelfIndex,
+                      active.slot,
+                    )
+                  : false;
                 const isDone = typeof stepIndex === "number" && stepIndex < activeIndex;
-                const exists = typeof stepIndex === "number";
+                const isPlanned = typeof stepIndex === "number";
 
                 return (
                   <div
-                    className={`slot ${exists ? "exists" : "missing"} ${
+                    className={`slot ${isPlanned ? "planned" : "unplanned"} ${
                       isActive ? "active" : ""
                     } ${isDone ? "done" : ""}`}
                     key={`${bay}-${shelf}-${slot}`}
@@ -734,7 +801,18 @@ function AislePickView({
 }) {
   const indexByName = useMemo(() => {
     const map = new Map<string, number>();
-    locations.forEach((location, index) => map.set(location.name, index));
+    locations.forEach((location, index) =>
+      map.set(
+        pickCoordinateKey(
+          location.zoneIndex,
+          location.aisle,
+          location.bay,
+          location.shelfIndex,
+          location.slot,
+        ),
+        index,
+      ),
+    );
     return map;
   }, [locations]);
 
@@ -773,6 +851,7 @@ function AislePickView({
         </div>
 
         <div className="picker-lane">
+          <div className={`picker-reach ${active?.side ?? "left"}`} />
           <div className="picker-marker">
             <span>Picker</span>
           </div>
@@ -816,7 +895,7 @@ function RouteTimeline({
       <div className="panel-heading">
         <div>
           <p className="eyebrow">Pick sequence</p>
-          <h2>{locations.length.toLocaleString()} locations</h2>
+          <h2>{locations.length.toLocaleString()} highlighted picks</h2>
         </div>
       </div>
       <div className="timeline-list">
@@ -1005,26 +1084,30 @@ export default function Home() {
     mode === "uploaded" && uploadedLocations.length > 0
       ? uploadedLocations
       : generatedLocations;
+  const routeStops = useMemo(
+    () => buildHighlightedStops(activeLocations),
+    [activeLocations],
+  );
   const activeConfig =
     mode === "uploaded" && uploadedLocations.length > 0
       ? analysis?.inferredConfig ?? config
       : config;
   const safeActiveIndex = Math.min(
     activeIndex,
-    Math.max(0, activeLocations.length - 1),
+    Math.max(0, routeStops.length - 1),
   );
-  const active = activeLocations[safeActiveIndex];
+  const active = routeStops[safeActiveIndex];
   const csv = useMemo(() => buildShipHeroCsv(activeLocations), [activeLocations]);
   const canUseUploaded = uploadedLocations.length > 0;
 
   useEffect(() => {
-    if (!isPlaying || activeLocations.length === 0) {
+    if (!isPlaying || routeStops.length === 0) {
       return;
     }
 
     const timer = window.setInterval(() => {
       setActiveIndex((current) => {
-        if (current >= activeLocations.length - 1) {
+        if (current >= routeStops.length - 1) {
           window.clearInterval(timer);
           setIsPlaying(false);
           return current;
@@ -1034,7 +1117,7 @@ export default function Home() {
     }, speedMs);
 
     return () => window.clearInterval(timer);
-  }, [activeLocations.length, isPlaying, speedMs]);
+  }, [isPlaying, routeStops.length, speedMs]);
 
   const updateConfig = (key: keyof LayoutConfig, value: number) => {
     setActiveIndex(0);
@@ -1082,7 +1165,7 @@ export default function Home() {
       isPlaying={isPlaying}
       onNext={() =>
         setActiveIndex(() =>
-          Math.min(activeLocations.length - 1, safeActiveIndex + 1),
+          Math.min(Math.max(0, routeStops.length - 1), safeActiveIndex + 1),
         )
       }
       onPlayPause={() => setIsPlaying((playing) => !playing)}
@@ -1090,7 +1173,7 @@ export default function Home() {
       onSeek={setActiveIndex}
       onSpeedChange={setSpeedMs}
       speedMs={speedMs}
-      total={activeLocations.length}
+      total={routeStops.length}
     />
   );
 
@@ -1106,10 +1189,10 @@ export default function Home() {
 
       <section className="summary-band top-summary">
         <Stat label="Mode" value={mode === "uploaded" ? "Uploaded CSV" : "Generated"} />
-        <Stat label="Route starts" value={activeLocations[0]?.name ?? "-"} />
+        <Stat label="Route starts" value={routeStops[0]?.name ?? "-"} />
         <Stat
           label="Route ends"
-          value={activeLocations[activeLocations.length - 1]?.name ?? "-"}
+          value={routeStops[routeStops.length - 1]?.name ?? "-"}
         />
         <Stat label="Current pick" value={active?.name ?? "-"} />
       </section>
@@ -1132,11 +1215,11 @@ export default function Home() {
               active={active}
               activeIndex={safeActiveIndex}
               config={activeConfig}
-              locations={activeLocations}
+              locations={routeStops}
             />
             <RouteTimeline
               activeIndex={safeActiveIndex}
-              locations={activeLocations}
+              locations={routeStops}
               onSelect={setActiveIndex}
             />
           </div>
@@ -1151,11 +1234,11 @@ export default function Home() {
               active={active}
               activeIndex={safeActiveIndex}
               config={activeConfig}
-              locations={activeLocations}
+              locations={routeStops}
             />
             <RouteTimeline
               activeIndex={safeActiveIndex}
-              locations={activeLocations}
+              locations={routeStops}
               onSelect={setActiveIndex}
             />
           </div>

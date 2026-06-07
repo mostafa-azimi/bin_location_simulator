@@ -353,10 +353,14 @@ button:disabled {
   background: #f9faf7;
   border: 2px solid var(--line-strong);
   border-radius: 8px;
-  display: grid;
-  gap: 16px;
-  min-width: 760px;
+  min-width: 840px;
   padding: 16px;
+}
+
+.serpentine-grid {
+  align-items: stretch;
+  display: grid;
+  gap: 14px;
 }
 
 .warehouse-aisle {
@@ -364,13 +368,54 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 8px;
   display: grid;
-  gap: 6px;
+  gap: 10px;
   padding: 10px;
 }
 
-.warehouse-row {
+.serpentine-aisle {
+  grid-template-rows: auto 1fr;
+  min-height: 620px;
+}
+
+.aisle-header {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.aisle-header strong {
+  background: white;
+  border: 2px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 760;
+  padding: 6px 10px;
+}
+
+.aisle-header span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 760;
+  overflow-wrap: anywhere;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.serpentine-bay-stack {
   display: grid;
   gap: 8px;
+  min-height: 560px;
+}
+
+.serpentine-pair {
+  align-items: stretch;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(62px, 1fr) 44px minmax(62px, 1fr);
+  min-height: 72px;
 }
 
 .warehouse-bay {
@@ -380,21 +425,17 @@ button:disabled {
   border-radius: 6px;
   color: var(--ink-soft);
   display: flex;
-  justify-content: space-between;
-  min-height: 48px;
-  padding: 8px 10px;
+  justify-content: center;
+  min-height: 64px;
+  padding: 8px;
+  text-align: center;
   transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
 }
 
 .warehouse-bay span {
   font-size: 13px;
   font-weight: 760;
-}
-
-.warehouse-bay strong {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 760;
+  line-height: 1.15;
 }
 
 .warehouse-bay.empty {
@@ -402,13 +443,14 @@ button:disabled {
   border-style: dashed;
 }
 
+.warehouse-bay.planned {
+  background: #eef5fb;
+  border-color: #b8d1ea;
+}
+
 .warehouse-bay.done {
   background: var(--teal-soft);
   border-color: #8ed5cc;
-  color: #075f58;
-}
-
-.warehouse-bay.done strong {
   color: #075f58;
 }
 
@@ -419,52 +461,103 @@ button:disabled {
   outline: 3px solid rgba(183, 121, 31, 0.22);
 }
 
-.warehouse-bay.active strong {
-  color: #714604;
-}
-
-.warehouse-corridor {
+.aisle-track {
   align-items: center;
   background: #e1e5dc;
-  border: 1px dashed var(--line-strong);
+  border: 1px dashed var(--line);
   border-radius: 6px;
-  display: grid;
-  grid-template-columns: 1fr auto auto 1fr;
-  gap: 12px;
-  min-height: 56px;
-  overflow: hidden;
-  padding: 0 16px;
+  display: flex;
+  justify-content: center;
+  overflow: visible;
   position: relative;
 }
 
-.corridor-line {
-  background: linear-gradient(90deg, transparent, var(--line-strong), transparent);
-  grid-column: 1 / -1;
-  height: 2px;
-  left: 16px;
+.aisle-track::before {
+  background: repeating-linear-gradient(
+    to bottom,
+    #9da79f 0,
+    #9da79f 12px,
+    transparent 12px,
+    transparent 24px
+  );
+  bottom: 8px;
+  content: "";
+  left: 50%;
   position: absolute;
-  right: 16px;
+  top: 8px;
+  transform: translateX(-50%);
+  width: 2px;
+}
+
+.aisle-track.done::before {
+  background: var(--teal);
+}
+
+.aisle-track.active::before {
+  background: var(--amber);
+}
+
+.aisle-track::after {
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  content: "";
+  left: 50%;
+  position: absolute;
+  transform: translateX(-50%);
+}
+
+.aisle-track.up::after {
+  border-bottom: 8px solid var(--line-strong);
+  top: 6px;
+}
+
+.aisle-track.down::after {
+  border-top: 8px solid var(--line-strong);
+  bottom: 6px;
+}
+
+.pick-tether {
+  animation: tetherDraw 420ms ease-out;
+  background: var(--amber);
+  height: 3px;
+  position: absolute;
   top: 50%;
+  z-index: 2;
 }
 
-.warehouse-corridor strong,
-.warehouse-corridor span {
-  background: #e1e5dc;
-  color: var(--foreground);
-  font-weight: 760;
-  position: relative;
-  z-index: 1;
+.pick-tether.left {
+  right: 50%;
+  transform-origin: right center;
+  width: calc(100% + 54px);
 }
 
-.warehouse-corridor strong {
-  border: 2px solid var(--line-strong);
+.pick-tether.right {
+  left: 50%;
+  transform-origin: left center;
+  width: calc(100% + 54px);
+}
+
+.overhead-picker {
+  align-items: center;
+  animation: pickerPulse 760ms ease-in-out infinite alternate;
+  background: var(--foreground);
+  border: 3px solid white;
   border-radius: 999px;
-  padding: 6px 12px;
+  box-shadow: 0 10px 24px rgba(21, 24, 23, 0.22);
+  color: white;
+  display: flex;
+  height: 44px;
+  justify-content: center;
+  position: relative;
+  width: 44px;
+  z-index: 3;
 }
 
-.warehouse-corridor span {
-  color: var(--muted);
-  font-size: 12px;
+.overhead-picker span {
+  font-size: 9px;
+  font-weight: 760;
+  line-height: 1;
+  text-align: center;
   text-transform: uppercase;
 }
 
@@ -584,13 +677,15 @@ button:disabled {
   font-weight: 760;
   justify-content: center;
   min-height: 40px;
+  position: relative;
 }
 
-.slot.exists {
+.slot.planned {
   background: rgba(255, 255, 255, 0.78);
+  border-color: #b8d1ea;
 }
 
-.slot.missing {
+.slot.unplanned {
   background: rgba(255, 255, 255, 0.28);
   border-style: dashed;
   color: #a3aaa6;
@@ -617,7 +712,7 @@ button:disabled {
   display: flex;
   justify-content: center;
   min-height: 360px;
-  overflow: hidden;
+  overflow: visible;
   position: relative;
 }
 
@@ -648,6 +743,48 @@ button:disabled {
   position: relative;
   width: 56px;
   z-index: 1;
+}
+
+.picker-reach {
+  animation: tetherDraw 420ms ease-out;
+  background: var(--amber);
+  height: 3px;
+  position: absolute;
+  top: 50%;
+  width: 132px;
+  z-index: 1;
+}
+
+.picker-reach.left {
+  right: 50%;
+  transform-origin: right center;
+}
+
+.picker-reach.right {
+  left: 50%;
+  transform-origin: left center;
+}
+
+@keyframes tetherDraw {
+  from {
+    opacity: 0;
+    transform: scaleX(0);
+  }
+
+  to {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+
+@keyframes pickerPulse {
+  from {
+    transform: scale(0.96);
+  }
+
+  to {
+    transform: scale(1.05);
+  }
 }
 
 .timeline-panel {
