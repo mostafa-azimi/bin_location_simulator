@@ -18,6 +18,7 @@ type LocationRecord = {
   name: string;
   zoneLabel: string;
   zoneIndex: number;
+  aisleLabel: string;
   aisle: number;
   bay: number;
   shelfLabel: string;
@@ -26,6 +27,7 @@ type LocationRecord = {
   side: RouteSide;
   originalIndex: number;
   zeroPadded: boolean;
+  usesTargetPrefix: boolean;
 };
 
 type UploadAnalysis = {
@@ -35,6 +37,7 @@ type UploadAnalysis = {
   invalidNames: string[];
   duplicateNames: string[];
   nonPaddedNames: string[];
+  legacyPrefixNames: string[];
   routeBacktracks: string[];
   inferredConfig: LayoutConfig;
 };
@@ -105,30 +108,41 @@ function locationName(
   shelfIndex: number,
   slot: number,
 ) {
-  return `${lettersFromNumber(zoneIndex)}${pad2(aisle)}-${pad2(
+  return `${pad2(zoneIndex)}${lettersFromNumber(aisle).toLowerCase()}-${pad2(
     bay,
   )}-${lettersFromNumber(shelfIndex)}-${pad2(slot)}`;
 }
 
 function parseLocationName(name: string, originalIndex: number): LocationRecord | null {
   const cleanName = name.trim();
-  const match = /^([A-Za-z]+)(\d+)-(\d+)-([A-Za-z]+)-(\d+)$/.exec(cleanName);
+  const targetMatch = /^(\d+)([A-Za-z]+)-(\d+)-([A-Za-z]+)-(\d+)$/.exec(cleanName);
+  const legacyMatch = /^([A-Za-z]+)(\d+)-(\d+)-([A-Za-z]+)-(\d+)$/.exec(cleanName);
 
-  if (!match) {
+  if (!targetMatch && !legacyMatch) {
     return null;
   }
 
-  const [, zoneLabelRaw, aisleRaw, bayRaw, shelfLabelRaw, slotRaw] = match;
-  const aisle = Number.parseInt(aisleRaw, 10);
+  const usesTargetPrefix = Boolean(targetMatch);
+  const parts = targetMatch ?? legacyMatch;
+
+  if (!parts) {
+    return null;
+  }
+
+  const [, firstPrefixPart, secondPrefixPart, bayRaw, shelfLabelRaw, slotRaw] = parts;
+  const zoneRaw = usesTargetPrefix ? firstPrefixPart : secondPrefixPart;
+  const aisleRaw = usesTargetPrefix ? secondPrefixPart : firstPrefixPart;
+  const zoneIndex = Number.parseInt(zoneRaw, 10);
+  const aisle = numberFromLetters(aisleRaw);
   const bay = Number.parseInt(bayRaw, 10);
   const slot = Number.parseInt(slotRaw, 10);
   const shelfIndex = numberFromLetters(shelfLabelRaw);
-  const zoneLabel = zoneLabelRaw.toUpperCase();
 
   return {
     name: cleanName,
-    zoneLabel,
-    zoneIndex: numberFromLetters(zoneLabel),
+    zoneLabel: pad2(zoneIndex),
+    zoneIndex,
+    aisleLabel: aisleRaw.toLowerCase(),
     aisle,
     bay,
     shelfLabel: shelfLabelRaw.toUpperCase(),
@@ -136,7 +150,8 @@ function parseLocationName(name: string, originalIndex: number): LocationRecord 
     slot,
     side: bay % 2 === 1 ? "left" : "right",
     originalIndex,
-    zeroPadded: aisleRaw.length >= 2 && bayRaw.length >= 2 && slotRaw.length >= 2,
+    zeroPadded: zoneRaw.length >= 2 && bayRaw.length >= 2 && slotRaw.length >= 2,
+    usesTargetPrefix,
   };
 }
 
@@ -257,6 +272,9 @@ function analyzeImportedCsv(text: string, fileName: string): UploadAnalysis {
   const nonPaddedNames = validLocations
     .filter((location) => !location.zeroPadded)
     .map((location) => location.name);
+  const legacyPrefixNames = validLocations
+    .filter((location) => !location.usesTargetPrefix)
+    .map((location) => location.name);
   const routeBacktracks: string[] = [];
 
   validLocations.forEach((current, index) => {
@@ -265,7 +283,7 @@ function analyzeImportedCsv(text: string, fileName: string): UploadAnalysis {
       return;
     }
 
-    const sameZone = current.zoneLabel === previous.zoneLabel;
+    const sameZone = current.zoneIndex === previous.zoneIndex;
     const movedBackward =
       sameZone &&
       (current.aisle < previous.aisle ||
@@ -283,6 +301,7 @@ function analyzeImportedCsv(text: string, fileName: string): UploadAnalysis {
     invalidNames,
     duplicateNames,
     nonPaddedNames,
+    legacyPrefixNames,
     routeBacktracks,
     inferredConfig: inferConfig(validLocations),
   };
@@ -546,12 +565,13 @@ function OverheadRoute({
   active: LocationRecord | undefined;
   config: LayoutConfig;
 }) {
-  const activeZone = active?.zoneLabel ?? "A";
+  const activeZoneIndex = active?.zoneIndex ?? 1;
+  const activeZone = active?.zoneLabel ?? "01";
   const firstStepByBay = useMemo(() => {
     const steps = new Map<string, number>();
 
     locations.forEach((location, index) => {
-      if (location.zoneLabel !== activeZone) {
+      if (location.zoneIndex !== activeZoneIndex) {
         return;
       }
 
@@ -562,7 +582,7 @@ function OverheadRoute({
     });
 
     return steps;
-  }, [activeZone, locations]);
+  }, [activeZoneIndex, locations]);
 
   const aisles = Array.from({ length: config.aisles }, (_, index) => index + 1);
   const pairCount = Math.ceil(config.bays / 2);
@@ -610,8 +630,8 @@ function OverheadRoute({
 
               <div className="warehouse-corridor">
                 <div className="corridor-line" />
-                <strong>{activeZone}{pad2(aisle)}</strong>
-                <span>Aisle {pad2(aisle)}</span>
+                <strong>{activeZone}{lettersFromNumber(aisle).toLowerCase()}</strong>
+                <span>Aisle {lettersFromNumber(aisle).toLowerCase()}</span>
               </div>
 
               <div
@@ -730,7 +750,7 @@ function AislePickView({
       <div className="panel-heading">
         <div>
           <p className="eyebrow">Aisle simulation</p>
-          <h2>{active ? `${active.zoneLabel}${pad2(active.aisle)}` : "No location"}</h2>
+          <h2>{active ? `${active.zoneLabel}${active.aisleLabel}` : "No location"}</h2>
         </div>
         <span className="small-badge">{active?.name ?? "No active pick"}</span>
       </div>
@@ -912,10 +932,18 @@ function OutputPage({
             label="backtracks"
             tone={(analysis?.routeBacktracks.length ?? 0) > 0 ? "warn" : "good"}
           />
+          <HealthPill
+            count={analysis?.legacyPrefixNames.length ?? 0}
+            label="legacy prefix"
+            tone={(analysis?.legacyPrefixNames.length ?? 0) > 0 ? "warn" : "good"}
+          />
         </div>
         <div className={`issue-list ${analysis ? "" : "muted"}`}>
           {analysis ? (
             <>
+              {analysis.legacyPrefixNames.slice(0, 4).map((name) => (
+                <p key={`legacy-${name}`}>Legacy prefix order: {name}</p>
+              ))}
               {analysis.nonPaddedNames.slice(0, 4).map((name) => (
                 <p key={`pad-${name}`}>Needs padding: {name}</p>
               ))}
@@ -931,6 +959,7 @@ function OutputPage({
               {analysis.nonPaddedNames.length === 0 &&
                 analysis.invalidNames.length === 0 &&
                 analysis.duplicateNames.length === 0 &&
+                analysis.legacyPrefixNames.length === 0 &&
                 analysis.routeBacktracks.length === 0 && (
                   <p>No obvious sort or format issues in the imported names.</p>
                 )}
