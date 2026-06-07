@@ -860,7 +860,6 @@ function OverheadRoute({
                       >
                         <div className="aisle-track-label">
                           <strong>{zoneLabel}{aisleLabel}</strong>
-                          <span>Aisle {aisleLabel}</span>
                         </div>
 
                         <div
@@ -933,18 +932,21 @@ function RackBay({
   const slots = Array.from({ length: config.slots }, (_, index) => index + 1);
 
   return (
-    <div className={`rack-bay ${bay === active?.bay ? "active-bay" : ""}`}>
+    <div className={`rack-bay side-${sideLabel} ${bay === active?.bay ? "active-bay" : ""}`}>
       <div className="rack-title">
         <span>{bay ? `Bay ${pad2(bay)}` : "No bay"}</span>
         <strong>{sideLabel}</strong>
       </div>
-      <div className="shelf-stack">
+      <div
+        className="shelf-stack"
+        style={{ gridTemplateColumns: `repeat(${config.shelves}, minmax(22px, 42px))` }}
+      >
         {shelves.map((shelf) => (
           <div className="shelf-row" key={`${bay}-${shelf}`}>
             <span className="shelf-label">{lettersFromNumber(shelf)}</span>
             <div
               className="slot-grid"
-              style={{ gridTemplateColumns: `repeat(${config.slots}, minmax(34px, 1fr))` }}
+              style={{ gridTemplateRows: `repeat(${config.slots}, minmax(10px, 18px))` }}
             >
               {slots.map((slot) => {
                 const name =
@@ -977,7 +979,8 @@ function RackBay({
                     key={`${bay}-${shelf}-${slot}`}
                     title={name}
                   >
-                    <span>{pad2(slot)}</span>
+                    <span className="slot-number">{pad2(slot)}</span>
+                    {isActive && <span aria-hidden="true" className="slot-pick-item" />}
                   </div>
                 );
               })}
@@ -1056,7 +1059,6 @@ function AislePickView({
         <div className={`aisle-demo-lane ${activeRouteSide} ${activeVertical}`}>
           <div className="aisle-demo-label">
             <strong>{aisleLabel}</strong>
-            <span>Aisle A</span>
           </div>
           <div className={`picker-reach ${activeRouteSide}`} />
           <div className="picker-marker">
