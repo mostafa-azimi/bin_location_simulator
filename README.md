@@ -14,7 +14,9 @@ movement, and exports a ShipHero upload CSV.
   U-shape path
 - View a vertical overhead warehouse rectangle with aisle labels and every bay labeled
 - View an aisle-facing picker simulation with multiple bay sections visible
+- Choose how many random aisle picks to highlight for the aisle-facing simulation
 - Adjust replay speed while playback is running
+- Reset either simulator back to the start of the replay
 - Import an existing location CSV and flag invalid names, duplicates, missing
   zero-padding, legacy prefix order, and route backtracks
 - Export `Name, Pickable, Priority, Type, Sellable` CSV rows for ShipHero

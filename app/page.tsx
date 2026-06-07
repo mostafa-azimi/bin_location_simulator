@@ -6,6 +6,7 @@ type RouteSide = "left" | "right";
 type PageKey = "create" | "overhead" | "aisle" | "output";
 type SourceMode = "generated" | "uploaded";
 type RoutePattern = "serpentine" | "u-shape";
+type TrackDirection = "up" | "down" | "u-path";
 
 type LayoutConfig = {
   zones: number;
@@ -41,6 +42,15 @@ type UploadAnalysis = {
   legacyPrefixNames: string[];
   routeBacktracks: string[];
   inferredConfig: LayoutConfig;
+};
+
+type OverheadPathStop = {
+  zoneIndex: number;
+  zoneLabel: string;
+  aisle: number;
+  aisleLabel: string;
+  rowKey: string;
+  trackDirection: TrackDirection;
 };
 
 const defaultConfig: LayoutConfig = {
@@ -161,10 +171,6 @@ function parseLocationName(name: string, originalIndex: number): LocationRecord 
   };
 }
 
-function bayRouteKey(location: LocationRecord) {
-  return `${location.zoneIndex}-${location.aisle}-${location.bay}`;
-}
-
 function pickCoordinateKey(
   zoneIndex: number,
   aisle: number,
@@ -175,23 +181,42 @@ function pickCoordinateKey(
   return `${zoneIndex}-${aisle}-${bay}-${shelfIndex}-${slot}`;
 }
 
-function buildHighlightedStops(locations: LocationRecord[]) {
-  const seenBays = new Set<string>();
+function seededRandom(seed: number) {
+  let state = seed || 1;
 
-  return locations.filter((location) => {
-    const key = bayRouteKey(location);
-
-    if (seenBays.has(key)) {
-      return false;
-    }
-
-    seenBays.add(key);
-    return true;
-  });
+  return () => {
+    state = (state * 1664525 + 1013904223) % 4294967296;
+    return state / 4294967296;
+  };
 }
 
-function flipSide(side: RouteSide): RouteSide {
-  return side === "left" ? "right" : "left";
+function buildRandomPickStops(
+  locations: LocationRecord[],
+  count: number,
+  seed: number,
+) {
+  const targetCount = clampNumber(count, 1, Math.max(1, locations.length));
+
+  if (targetCount >= locations.length) {
+    return [...locations].sort((a, b) => alphaSort(a.name, b.name));
+  }
+
+  const random = seededRandom(seed);
+  const picks: LocationRecord[] = [];
+
+  locations.forEach((location, index) => {
+    if (index < targetCount) {
+      picks.push(location);
+      return;
+    }
+
+    const swapIndex = Math.floor(random() * (index + 1));
+    if (swapIndex < targetCount) {
+      picks[swapIndex] = location;
+    }
+  });
+
+  return picks.sort((a, b) => alphaSort(a.name, b.name));
 }
 
 function routeSideForPattern(
@@ -204,21 +229,6 @@ function routeSideForPattern(
   }
 
   return location.side;
-}
-
-function screenSideForOverhead(
-  location: LocationRecord,
-  config: LayoutConfig,
-  routePattern: RoutePattern,
-  aisleDirection: "up" | "down",
-) {
-  const pickerSide = routeSideForPattern(location, config, routePattern);
-
-  if (routePattern === "serpentine" && aisleDirection === "down") {
-    return flipSide(pickerSide);
-  }
-
-  return pickerSide;
 }
 
 function buildOverheadRows(
@@ -248,6 +258,52 @@ function buildOverheadRows(
     leftBay: aisleDirection === "up" ? odd : even,
     rightBay: aisleDirection === "up" ? even : odd,
   }));
+}
+
+function overheadRowKey(
+  zoneIndex: number,
+  aisle: number,
+  leftBay: number | null,
+  rightBay: number | null,
+) {
+  return `${zoneIndex}-${aisle}-${leftBay ?? "empty"}-${rightBay ?? "empty"}`;
+}
+
+function buildOverheadPath(config: LayoutConfig, routePattern: RoutePattern) {
+  const path: OverheadPathStop[] = [];
+
+  for (let zone = 1; zone <= config.zones; zone += 1) {
+    for (let aisle = 1; aisle <= config.aisles; aisle += 1) {
+      const aisleLabel = lettersFromNumber(aisle);
+      const aisleDirection =
+        routePattern === "serpentine" && aisle % 2 === 0 ? "down" : "up";
+      const rows = buildOverheadRows(config, routePattern, aisleDirection);
+      const addStop = (
+        row: { leftBay: number | null; rightBay: number | null },
+        trackDirection: TrackDirection,
+      ) => {
+        path.push({
+          zoneIndex: zone,
+          zoneLabel: pad2(zone),
+          aisle,
+          aisleLabel,
+          rowKey: overheadRowKey(zone, aisle, row.leftBay, row.rightBay),
+          trackDirection,
+        });
+      };
+
+      if (routePattern === "u-shape") {
+        [...rows].reverse().forEach((row) => addStop(row, "up"));
+        rows.forEach((row) => addStop(row, "down"));
+        continue;
+      }
+
+      const traversalRows = aisleDirection === "up" ? [...rows].reverse() : rows;
+      traversalRows.forEach((row) => addStop(row, aisleDirection));
+    }
+  }
+
+  return path;
 }
 
 function generateLocations(config: LayoutConfig) {
@@ -512,7 +568,7 @@ function RoutePatternSwitch({
   onChange: (routePattern: RoutePattern) => void;
 }) {
   return (
-    <section className="panel route-pattern-panel">
+    <div className="toolbar-group route-pattern-panel">
       <div className="panel-heading">
         <div>
           <p className="eyebrow">Route path</p>
@@ -531,52 +587,85 @@ function RoutePatternSwitch({
           </button>
         ))}
       </div>
-    </section>
+    </div>
+  );
+}
+
+function RandomPickControls({
+  pickCount,
+  maxCount,
+  onPickCountChange,
+  onRandomize,
+}: {
+  pickCount: number;
+  maxCount: number;
+  onPickCountChange: (pickCount: number) => void;
+  onRandomize: () => void;
+}) {
+  return (
+    <div className="toolbar-group random-picks-panel">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">Aisle picks</p>
+          <h2>Random locations</h2>
+        </div>
+      </div>
+      <label className="number-field compact-number-field">
+        <span>Locations to highlight</span>
+        <input
+          max={Math.max(1, maxCount)}
+          min={1}
+          onChange={(event) =>
+            onPickCountChange(Number.parseInt(event.target.value, 10))
+          }
+          type="number"
+          value={pickCount}
+        />
+      </label>
+      <button className="ghost-action compact-action" onClick={onRandomize} type="button">
+        New random set
+      </button>
+    </div>
   );
 }
 
 function PlaybackControls({
-  active,
+  activeLabel,
   activeIndex,
   total,
   isPlaying,
   speedMs,
-  onPrevious,
-  onNext,
   onPlayPause,
+  onReset,
   onSeek,
   onSpeedChange,
 }: {
-  active: LocationRecord | undefined;
+  activeLabel: string;
   activeIndex: number;
   total: number;
   isPlaying: boolean;
   speedMs: number;
-  onPrevious: () => void;
-  onNext: () => void;
   onPlayPause: () => void;
+  onReset: () => void;
   onSeek: (index: number) => void;
   onSpeedChange: (speedMs: number) => void;
 }) {
   return (
-    <section className="panel playback-panel">
+    <div className="toolbar-group playback-panel">
       <div className="panel-heading">
         <div>
           <p className="eyebrow">Replay</p>
-          <h2>{active?.name ?? "No active location"}</h2>
+          <h2>{activeLabel}</h2>
         </div>
         <span className="small-badge">{total ? `${activeIndex + 1} / ${total}` : "0 / 0"}</span>
       </div>
 
       <div className="playback-row">
-        <button className="ghost-action" onClick={onPrevious} type="button">
-          Previous
-        </button>
         <button className="primary-action compact" onClick={onPlayPause} type="button">
           {isPlaying ? "Pause" : "Play"}
         </button>
-        <button className="ghost-action" onClick={onNext} type="button">
-          Next
+        <button className="ghost-action" onClick={onReset} type="button">
+          Reset
         </button>
       </div>
 
@@ -603,7 +692,7 @@ function PlaybackControls({
         />
         <strong>{(speedMs / 1000).toFixed(2)} sec / pick</strong>
       </label>
-    </section>
+    </div>
   );
 }
 
@@ -687,49 +776,28 @@ function CreatePage({
 }
 
 function OverheadRoute({
-  locations,
   activeIndex,
-  active,
   config,
   routePattern,
+  pathStops,
 }: {
-  locations: LocationRecord[];
   activeIndex: number;
-  active: LocationRecord | undefined;
   config: LayoutConfig;
   routePattern: RoutePattern;
+  pathStops: OverheadPathStop[];
 }) {
-  const activeZoneIndex = active?.zoneIndex ?? 1;
-  const activeZone = active?.zoneLabel ?? "01";
-  const stopIndexByBay = useMemo(() => {
-    const steps = new Map<string, number>();
-
-    locations.forEach((location, index) => {
-      if (location.zoneIndex !== activeZoneIndex) {
-        return;
-      }
-
-      steps.set(`${location.aisle}-${location.bay}`, index);
-    });
-
-    return steps;
-  }, [activeZoneIndex, locations]);
-
+  const activePathStop = pathStops[activeIndex];
+  const activeZoneIndex = activePathStop?.zoneIndex ?? 1;
+  const activeZone = activePathStop?.zoneLabel ?? "01";
+  const visitedRows = useMemo(() => {
+    const rows = new Set<string>();
+    pathStops.slice(0, activeIndex).forEach((stop) => rows.add(stop.rowKey));
+    return rows;
+  }, [activeIndex, pathStops]);
   const aisles = Array.from({ length: config.aisles }, (_, index) => index + 1);
-
-  const bayClassName = (aisle: number, bay: number) => {
-    const step = stopIndexByBay.get(`${aisle}-${bay}`);
-    const isActive = active?.aisle === aisle && active.bay === bay;
-    const isPlanned = typeof step === "number";
-    const isDone = typeof step === "number" && activeIndex > step;
-
-    return `warehouse-bay ${isPlanned ? "planned" : ""} ${
-      isActive ? "active" : ""
-    } ${isDone ? "done" : ""}`;
-  };
-  const renderBay = (aisle: number, bay: number | null) =>
+  const renderBay = (bay: number | null) =>
     bay && bay <= config.bays ? (
-      <div className={bayClassName(aisle, bay)}>
+      <div className="warehouse-bay">
         <span>Bay {pad2(bay)}</span>
       </div>
     ) : (
@@ -773,53 +841,34 @@ function OverheadRoute({
                     style={{ gridTemplateRows: `repeat(${rows.length}, minmax(72px, 1fr))` }}
                   >
                     {rows.map(({ leftBay, rightBay }) => {
-                      const rowBays = [leftBay, rightBay].filter(
-                        (bay): bay is number => Boolean(bay),
-                      );
-                      const plannedSteps = rowBays
-                        .map((bay) => stopIndexByBay.get(`${aisle}-${bay}`))
-                        .filter(
-                        (step): step is number => typeof step === "number",
-                      );
-                      const isActivePair =
-                        active?.aisle === aisle && rowBays.includes(active.bay);
-                      const isDonePair =
-                        plannedSteps.length > 0 &&
-                        plannedSteps.every((step) => activeIndex > step);
+                      const rowKey = overheadRowKey(activeZoneIndex, aisle, leftBay, rightBay);
+                      const isActivePair = activePathStop?.rowKey === rowKey;
+                      const isDonePair = visitedRows.has(rowKey);
                       const trackDirection =
-                        routePattern === "u-shape" && isActivePair && active
-                          ? routeSideForPattern(active, config, routePattern) === "left"
-                            ? "up"
-                            : "down"
+                        isActivePair && activePathStop
+                          ? activePathStop.trackDirection
                           : routePattern === "u-shape"
                             ? "u-path"
                             : direction;
-                      const tetherSide =
-                        active && isActivePair
-                          ? screenSideForOverhead(active, config, routePattern, direction)
-                          : "left";
 
                       return (
                         <div
                           className={`route-pair ${isActivePair ? "active-pair" : ""}`}
                           key={`${aisle}-${leftBay ?? "empty"}-${rightBay ?? "empty"}`}
                         >
-                          {renderBay(aisle, leftBay)}
+                          {renderBay(leftBay)}
                           <div
                             className={`aisle-track ${trackDirection} ${
                               isActivePair ? "active" : ""
                             } ${isDonePair ? "done" : ""}`}
                           >
                             {isActivePair && (
-                              <>
-                                <div className={`pick-tether ${tetherSide}`} />
-                                <div className="overhead-picker">
-                                  <span>Picker</span>
-                                </div>
-                              </>
+                              <div className="overhead-picker">
+                                <span>Picker</span>
+                              </div>
                             )}
                           </div>
-                          {renderBay(aisle, rightBay)}
+                          {renderBay(rightBay)}
                         </div>
                       );
                     })}
@@ -1068,7 +1117,6 @@ function RouteTimeline({
               onClick={() => onSelect(routeIndex)}
               type="button"
             >
-              <span>{routeIndex + 1}</span>
               <strong>{location.name}</strong>
               <em>{routeSideForPattern(location, config, routePattern)}</em>
             </button>
@@ -1239,6 +1287,8 @@ export default function Home() {
   const [analysis, setAnalysis] = useState<UploadAnalysis | null>(null);
   const [mode, setMode] = useState<SourceMode>("generated");
   const [routePattern, setRoutePattern] = useState<RoutePattern>("serpentine");
+  const [randomPickCount, setRandomPickCount] = useState(8);
+  const [randomPickSeed, setRandomPickSeed] = useState(1);
 
   const generatedLocations = useMemo(() => generateLocations(config), [config]);
   const uploadedLocations = analysis?.validLocations ?? [];
@@ -1246,30 +1296,49 @@ export default function Home() {
     mode === "uploaded" && uploadedLocations.length > 0
       ? uploadedLocations
       : generatedLocations;
-  const routeStops = useMemo(
-    () => buildHighlightedStops(activeLocations),
-    [activeLocations],
-  );
   const activeConfig =
     mode === "uploaded" && uploadedLocations.length > 0
       ? analysis?.inferredConfig ?? config
       : config;
+  const effectiveRandomPickCount = clampNumber(
+    randomPickCount,
+    1,
+    Math.max(1, activeLocations.length),
+  );
+  const overheadPath = useMemo(
+    () => buildOverheadPath(activeConfig, routePattern),
+    [activeConfig, routePattern],
+  );
+  const aislePickStops = useMemo(
+    () => buildRandomPickStops(activeLocations, effectiveRandomPickCount, randomPickSeed),
+    [activeLocations, effectiveRandomPickCount, randomPickSeed],
+  );
+  const isSimulatorPage = activePage === "overhead" || activePage === "aisle";
+  const simulationTotal =
+    activePage === "overhead" ? overheadPath.length : aislePickStops.length;
   const safeActiveIndex = Math.min(
     activeIndex,
-    Math.max(0, routeStops.length - 1),
+    Math.max(0, simulationTotal - 1),
   );
-  const active = routeStops[safeActiveIndex];
+  const activePathStop = overheadPath[safeActiveIndex];
+  const activePick = aislePickStops[safeActiveIndex];
+  const activeLabel =
+    activePage === "overhead"
+      ? activePathStop
+        ? `Walking ${activePathStop.zoneLabel}${activePathStop.aisleLabel}`
+        : "Walking route"
+      : activePick?.name ?? "No active pick";
   const csv = useMemo(() => buildShipHeroCsv(activeLocations), [activeLocations]);
   const canUseUploaded = uploadedLocations.length > 0;
 
   useEffect(() => {
-    if (!isPlaying || routeStops.length === 0) {
+    if (!isPlaying || !isSimulatorPage || simulationTotal === 0) {
       return;
     }
 
     const timer = window.setInterval(() => {
       setActiveIndex((current) => {
-        if (current >= routeStops.length - 1) {
+        if (current >= simulationTotal - 1) {
           window.clearInterval(timer);
           setIsPlaying(false);
           return current;
@@ -1279,7 +1348,7 @@ export default function Home() {
     }, speedMs);
 
     return () => window.clearInterval(timer);
-  }, [isPlaying, routeStops.length, speedMs]);
+  }, [isPlaying, isSimulatorPage, simulationTotal, speedMs]);
 
   const updateConfig = (key: keyof LayoutConfig, value: number) => {
     setActiveIndex(0);
@@ -1298,6 +1367,23 @@ export default function Home() {
 
   const selectRoutePattern = (nextPattern: RoutePattern) => {
     setRoutePattern(nextPattern);
+    setActiveIndex(0);
+    setIsPlaying(false);
+  };
+
+  const updateRandomPickCount = (value: number) => {
+    setRandomPickCount(clampNumber(value, 1, Math.max(1, activeLocations.length)));
+    setActiveIndex(0);
+    setIsPlaying(false);
+  };
+
+  const randomizePickStops = () => {
+    setRandomPickSeed((seed) => seed + 1);
+    setActiveIndex(0);
+    setIsPlaying(false);
+  };
+
+  const resetSimulation = () => {
     setActiveIndex(0);
     setIsPlaying(false);
   };
@@ -1328,30 +1414,33 @@ export default function Home() {
 
   const playbackControls = (
     <PlaybackControls
-      active={active}
+      activeLabel={activeLabel}
       activeIndex={safeActiveIndex}
       isPlaying={isPlaying}
-      onNext={() =>
-        setActiveIndex(() =>
-          Math.min(Math.max(0, routeStops.length - 1), safeActiveIndex + 1),
-        )
-      }
       onPlayPause={() => setIsPlaying((playing) => !playing)}
-      onPrevious={() => setActiveIndex(() => Math.max(0, safeActiveIndex - 1))}
+      onReset={resetSimulation}
       onSeek={setActiveIndex}
       onSpeedChange={setSpeedMs}
       speedMs={speedMs}
-      total={routeStops.length}
+      total={simulationTotal}
     />
   );
-  const simulationControls = (
-    <>
+  const simulationControls = (showRandomPickControls: boolean) => (
+    <section className="panel simulation-toolbar">
       <RoutePatternSwitch
         onChange={selectRoutePattern}
         routePattern={routePattern}
       />
+      {showRandomPickControls && (
+        <RandomPickControls
+          maxCount={activeLocations.length}
+          onPickCountChange={updateRandomPickCount}
+          onRandomize={randomizePickStops}
+          pickCount={effectiveRandomPickCount}
+        />
+      )}
       {playbackControls}
-    </>
+    </section>
   );
 
   return (
@@ -1361,7 +1450,14 @@ export default function Home() {
           <p className="eyebrow">ShipHero bin planning</p>
           <h1>Bin route simulator</h1>
         </div>
-        <PageTabs activePage={activePage} onChange={setActivePage} />
+        <PageTabs
+          activePage={activePage}
+          onChange={(page) => {
+            setActivePage(page);
+            setIsPlaying(false);
+            setActiveIndex(0);
+          }}
+        />
       </header>
 
       {activePage === "create" && (
@@ -1378,44 +1474,36 @@ export default function Home() {
       {activePage === "overhead" && (
         <div className="simulation-grid">
           <div className="simulation-main">
+            {simulationControls(false)}
             <OverheadRoute
-              active={active}
               activeIndex={safeActiveIndex}
               config={activeConfig}
-              locations={routeStops}
+              pathStops={overheadPath}
               routePattern={routePattern}
-            />
-            <RouteTimeline
-              activeIndex={safeActiveIndex}
-              config={activeConfig}
-              locations={routeStops}
-              routePattern={routePattern}
-              onSelect={setActiveIndex}
             />
           </div>
-          <aside className="simulation-side">{simulationControls}</aside>
         </div>
       )}
 
       {activePage === "aisle" && (
         <div className="simulation-grid">
           <div className="simulation-main">
+            {simulationControls(true)}
             <AislePickView
-              active={active}
+              active={activePick}
               activeIndex={safeActiveIndex}
               config={activeConfig}
-              locations={routeStops}
+              locations={aislePickStops}
               routePattern={routePattern}
             />
             <RouteTimeline
               activeIndex={safeActiveIndex}
               config={activeConfig}
-              locations={routeStops}
+              locations={aislePickStops}
               routePattern={routePattern}
               onSelect={setActiveIndex}
             />
           </div>
-          <aside className="simulation-side">{simulationControls}</aside>
         </div>
       )}
 
