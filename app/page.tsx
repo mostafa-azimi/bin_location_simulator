@@ -5,6 +5,7 @@ import { ChangeEvent, useEffect, useMemo, useState } from "react";
 type RouteSide = "left" | "right";
 type PageKey = "create" | "overhead" | "aisle" | "output";
 type SourceMode = "generated" | "uploaded";
+type RoutePattern = "serpentine" | "u-shape";
 
 type LayoutConfig = {
   zones: number;
@@ -72,6 +73,11 @@ const pageLabels: Array<{ key: PageKey; label: string }> = [
   { key: "aisle", label: "Aisle" },
   { key: "output", label: "Output" },
 ];
+
+const routePatternLabels: Record<RoutePattern, string> = {
+  serpentine: "Serpentine",
+  "u-shape": "U shape",
+};
 
 const alphaSort = (a: string, b: string) =>
   a.localeCompare(b, "en-US", { numeric: false, sensitivity: "base" });
@@ -182,6 +188,66 @@ function buildHighlightedStops(locations: LocationRecord[]) {
     seenBays.add(key);
     return true;
   });
+}
+
+function flipSide(side: RouteSide): RouteSide {
+  return side === "left" ? "right" : "left";
+}
+
+function routeSideForPattern(
+  location: LocationRecord,
+  config: LayoutConfig,
+  routePattern: RoutePattern,
+): RouteSide {
+  if (routePattern === "u-shape") {
+    return location.bay <= Math.ceil(config.bays / 2) ? "left" : "right";
+  }
+
+  return location.side;
+}
+
+function screenSideForOverhead(
+  location: LocationRecord,
+  config: LayoutConfig,
+  routePattern: RoutePattern,
+  aisleDirection: "up" | "down",
+) {
+  const pickerSide = routeSideForPattern(location, config, routePattern);
+
+  if (routePattern === "serpentine" && aisleDirection === "down") {
+    return flipSide(pickerSide);
+  }
+
+  return pickerSide;
+}
+
+function buildOverheadRows(
+  config: LayoutConfig,
+  routePattern: RoutePattern,
+  aisleDirection: "up" | "down",
+) {
+  if (routePattern === "u-shape") {
+    const leftSideCount = Math.ceil(config.bays / 2);
+
+    return Array.from({ length: leftSideCount }, (_, index) => ({
+      leftBay: leftSideCount - index,
+      rightBay:
+        leftSideCount + index + 1 <= config.bays
+          ? leftSideCount + index + 1
+          : null,
+    }));
+  }
+
+  const pairs = Array.from({ length: Math.ceil(config.bays / 2) }, (_, index) => ({
+    odd: index * 2 + 1,
+    even: index * 2 + 2 <= config.bays ? index * 2 + 2 : null,
+  }));
+  const physicalPairs = aisleDirection === "up" ? [...pairs].reverse() : pairs;
+
+  return physicalPairs.map(({ odd, even }) => ({
+    leftBay: aisleDirection === "up" ? odd : even,
+    rightBay: aisleDirection === "up" ? even : odd,
+  }));
 }
 
 function generateLocations(config: LayoutConfig) {
@@ -438,6 +504,37 @@ function SourceSwitch({
   );
 }
 
+function RoutePatternSwitch({
+  routePattern,
+  onChange,
+}: {
+  routePattern: RoutePattern;
+  onChange: (routePattern: RoutePattern) => void;
+}) {
+  return (
+    <section className="panel route-pattern-panel">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">Route path</p>
+          <h2>{routePatternLabels[routePattern]}</h2>
+        </div>
+      </div>
+      <div className="mode-switch route-pattern-switch" aria-label="Route path">
+        {(Object.keys(routePatternLabels) as RoutePattern[]).map((pattern) => (
+          <button
+            className={routePattern === pattern ? "active" : ""}
+            key={pattern}
+            onClick={() => onChange(pattern)}
+            type="button"
+          >
+            {routePatternLabels[pattern]}
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function PlaybackControls({
   active,
   activeIndex,
@@ -594,11 +691,13 @@ function OverheadRoute({
   activeIndex,
   active,
   config,
+  routePattern,
 }: {
   locations: LocationRecord[];
   activeIndex: number;
   active: LocationRecord | undefined;
   config: LayoutConfig;
+  routePattern: RoutePattern;
 }) {
   const activeZoneIndex = active?.zoneIndex ?? 1;
   const activeZone = active?.zoneLabel ?? "01";
@@ -617,11 +716,6 @@ function OverheadRoute({
   }, [activeZoneIndex, locations]);
 
   const aisles = Array.from({ length: config.aisles }, (_, index) => index + 1);
-  const pairCount = Math.ceil(config.bays / 2);
-  const pairs = Array.from({ length: pairCount }, (_, index) => ({
-    odd: index * 2 + 1,
-    even: index * 2 + 2,
-  }));
 
   const bayClassName = (aisle: number, bay: number) => {
     const step = stopIndexByBay.get(`${aisle}-${bay}`);
@@ -633,6 +727,14 @@ function OverheadRoute({
       isActive ? "active" : ""
     } ${isDone ? "done" : ""}`;
   };
+  const renderBay = (aisle: number, bay: number | null) =>
+    bay && bay <= config.bays ? (
+      <div className={bayClassName(aisle, bay)}>
+        <span>Bay {pad2(bay)}</span>
+      </div>
+    ) : (
+      <div className="warehouse-bay empty" />
+    );
 
   return (
     <section className="panel visualization-panel">
@@ -641,72 +743,83 @@ function OverheadRoute({
           <p className="eyebrow">Overhead simulation</p>
           <h2>Zone {activeZone}</h2>
         </div>
-        <span className="small-badge">Serpentine path</span>
+        <span className="small-badge">{routePatternLabels[routePattern]} path</span>
       </div>
 
       <div className="warehouse-scroll">
-        <div className="warehouse-outline serpentine-outline">
+        <div className="warehouse-outline route-outline">
           <div
-            className="serpentine-grid"
+            className="route-grid"
             style={{ gridTemplateColumns: `repeat(${config.aisles}, minmax(164px, 1fr))` }}
           >
             {aisles.map((aisle) => {
               const aisleLabel = lettersFromNumber(aisle);
-              const direction = aisle % 2 === 1 ? "up" : "down";
-              const physicalPairs = direction === "up" ? [...pairs].reverse() : pairs;
+              const direction =
+                routePattern === "serpentine" && aisle % 2 === 0 ? "down" : "up";
+              const rows = buildOverheadRows(config, routePattern, direction);
 
               return (
-                <div className={`warehouse-aisle serpentine-aisle ${direction}`} key={aisle}>
-                  <div className="aisle-header">
+                <div
+                  className={`warehouse-aisle route-aisle ${routePattern} ${direction}`}
+                  key={aisle}
+                >
+                  <div className="aisle-track-label">
                     <strong>{activeZone}{aisleLabel}</strong>
                     <span>Aisle {aisleLabel}</span>
                   </div>
 
                   <div
-                    className="serpentine-bay-stack"
-                    style={{ gridTemplateRows: `repeat(${pairCount}, minmax(72px, 1fr))` }}
+                    className="route-bay-stack"
+                    style={{ gridTemplateRows: `repeat(${rows.length}, minmax(72px, 1fr))` }}
                   >
-                    {physicalPairs.map(({ odd, even }) => {
-                      const oddStep = stopIndexByBay.get(`${aisle}-${odd}`);
-                      const evenStep = stopIndexByBay.get(`${aisle}-${even}`);
-                      const plannedSteps = [oddStep, evenStep].filter(
+                    {rows.map(({ leftBay, rightBay }) => {
+                      const rowBays = [leftBay, rightBay].filter(
+                        (bay): bay is number => Boolean(bay),
+                      );
+                      const plannedSteps = rowBays
+                        .map((bay) => stopIndexByBay.get(`${aisle}-${bay}`))
+                        .filter(
                         (step): step is number => typeof step === "number",
                       );
                       const isActivePair =
-                        active?.aisle === aisle && (active.bay === odd || active.bay === even);
+                        active?.aisle === aisle && rowBays.includes(active.bay);
                       const isDonePair =
                         plannedSteps.length > 0 &&
                         plannedSteps.every((step) => activeIndex > step);
+                      const trackDirection =
+                        routePattern === "u-shape" && isActivePair && active
+                          ? routeSideForPattern(active, config, routePattern) === "left"
+                            ? "up"
+                            : "down"
+                          : routePattern === "u-shape"
+                            ? "u-path"
+                            : direction;
+                      const tetherSide =
+                        active && isActivePair
+                          ? screenSideForOverhead(active, config, routePattern, direction)
+                          : "left";
 
                       return (
                         <div
-                          className={`serpentine-pair ${isActivePair ? "active-pair" : ""}`}
-                          key={`${aisle}-${odd}-${even}`}
+                          className={`route-pair ${isActivePair ? "active-pair" : ""}`}
+                          key={`${aisle}-${leftBay ?? "empty"}-${rightBay ?? "empty"}`}
                         >
-                          <div className={bayClassName(aisle, odd)}>
-                            <span>Bay {pad2(odd)}</span>
-                          </div>
+                          {renderBay(aisle, leftBay)}
                           <div
-                            className={`aisle-track ${direction} ${
+                            className={`aisle-track ${trackDirection} ${
                               isActivePair ? "active" : ""
                             } ${isDonePair ? "done" : ""}`}
                           >
                             {isActivePair && (
                               <>
-                                <div className={`pick-tether ${active?.side ?? "left"}`} />
+                                <div className={`pick-tether ${tetherSide}`} />
                                 <div className="overhead-picker">
                                   <span>Picker</span>
                                 </div>
                               </>
                             )}
                           </div>
-                          {even <= config.bays ? (
-                            <div className={bayClassName(aisle, even)}>
-                              <span>Bay {pad2(even)}</span>
-                            </div>
-                          ) : (
-                            <div className="warehouse-bay empty" />
-                          )}
+                          {renderBay(aisle, rightBay)}
                         </div>
                       );
                     })}
@@ -727,12 +840,14 @@ function RackBay({
   config,
   indexByName,
   activeIndex,
+  sideLabel,
 }: {
   bay: number | null;
   active: LocationRecord | undefined;
   config: LayoutConfig;
   indexByName: Map<string, number>;
   activeIndex: number;
+  sideLabel: RouteSide;
 }) {
   const shelves = Array.from({ length: config.shelves }, (_, index) => config.shelves - index);
   const slots = Array.from({ length: config.slots }, (_, index) => index + 1);
@@ -741,7 +856,7 @@ function RackBay({
     <div className={`rack-bay ${bay === active?.bay ? "active-bay" : ""}`}>
       <div className="rack-title">
         <span>{bay ? `Bay ${pad2(bay)}` : "No bay"}</span>
-        <strong>{bay && bay % 2 === 1 ? "Left" : "Right"}</strong>
+        <strong>{sideLabel}</strong>
       </div>
       <div className="shelf-stack">
         {shelves.map((shelf) => (
@@ -799,11 +914,13 @@ function AislePickView({
   activeIndex,
   active,
   config,
+  routePattern,
 }: {
   locations: LocationRecord[];
   activeIndex: number;
   active: LocationRecord | undefined;
   config: LayoutConfig;
+  routePattern: RoutePattern;
 }) {
   const indexByName = useMemo(() => {
     const map = new Map<string, number>();
@@ -822,12 +939,35 @@ function AislePickView({
     return map;
   }, [locations]);
 
-  const pairCount = Math.ceil(config.bays / 2);
-  const activePair = active ? Math.floor((active.bay - 1) / 2) : 0;
-  const basePair = Math.max(0, Math.min(activePair, Math.max(0, pairCount - 2)));
-  const visiblePairs = [basePair, Math.min(pairCount - 1, basePair + 1)];
-  const leftBays = visiblePairs.map((pair) => pair * 2 + 1).filter((bay) => bay <= config.bays);
-  const rightBays = visiblePairs.map((pair) => pair * 2 + 2).filter((bay) => bay <= config.bays);
+  const splitBay = Math.ceil(config.bays / 2);
+  const activeRouteSide = active
+    ? routeSideForPattern(active, config, routePattern)
+    : "left";
+  let leftBays: number[] = [];
+  let rightBays: number[] = [];
+
+  if (routePattern === "u-shape") {
+    const activeRow = active
+      ? activeRouteSide === "left"
+        ? active.bay - 1
+        : config.bays - active.bay
+      : 0;
+    const baseRow = Math.max(0, Math.min(activeRow, Math.max(0, splitBay - 2)));
+    const visibleRows = [baseRow, Math.min(splitBay - 1, baseRow + 1)];
+
+    leftBays = visibleRows.map((row) => row + 1).filter((bay) => bay <= splitBay);
+    rightBays = visibleRows
+      .map((row) => config.bays - row)
+      .filter((bay) => bay > splitBay && bay <= config.bays);
+  } else {
+    const pairCount = Math.ceil(config.bays / 2);
+    const activePair = active ? Math.floor((active.bay - 1) / 2) : 0;
+    const basePair = Math.max(0, Math.min(activePair, Math.max(0, pairCount - 2)));
+    const visiblePairs = [basePair, Math.min(pairCount - 1, basePair + 1)];
+
+    leftBays = visiblePairs.map((pair) => pair * 2 + 1).filter((bay) => bay <= config.bays);
+    rightBays = visiblePairs.map((pair) => pair * 2 + 2).filter((bay) => bay <= config.bays);
+  }
 
   return (
     <section className="panel visualization-panel">
@@ -836,12 +976,16 @@ function AislePickView({
           <p className="eyebrow">Aisle simulation</p>
           <h2>{active ? `${active.zoneLabel}${active.aisleLabel}` : "No location"}</h2>
         </div>
-        <span className="small-badge">{active?.name ?? "No active pick"}</span>
+        <span className="small-badge">
+          {routePatternLabels[routePattern]}: {active?.name ?? "No active pick"}
+        </span>
       </div>
 
       <div className="aisle-window">
         <div className="rack-bank left-bank">
-          <div className="bank-label">Left side, odd bays</div>
+          <div className="bank-label">
+            {routePattern === "u-shape" ? "Left side, sequential bays" : "Left side, odd bays"}
+          </div>
           <div className="rack-bay-row">
             {leftBays.map((bay) => (
               <RackBay
@@ -851,13 +995,14 @@ function AislePickView({
                 config={config}
                 indexByName={indexByName}
                 key={bay}
+                sideLabel="left"
               />
             ))}
           </div>
         </div>
 
         <div className="picker-lane">
-          <div className={`picker-reach ${active?.side ?? "left"}`} />
+          <div className={`picker-reach ${activeRouteSide}`} />
           <div className="picker-marker">
             <span>Picker</span>
           </div>
@@ -865,7 +1010,9 @@ function AislePickView({
         </div>
 
         <div className="rack-bank right-bank">
-          <div className="bank-label">Right side, even bays</div>
+          <div className="bank-label">
+            {routePattern === "u-shape" ? "Right side, return bays" : "Right side, even bays"}
+          </div>
           <div className="rack-bay-row">
             {rightBays.map((bay) => (
               <RackBay
@@ -875,6 +1022,7 @@ function AislePickView({
                 config={config}
                 indexByName={indexByName}
                 key={bay}
+                sideLabel="right"
               />
             ))}
           </div>
@@ -887,10 +1035,14 @@ function AislePickView({
 function RouteTimeline({
   locations,
   activeIndex,
+  config,
+  routePattern,
   onSelect,
 }: {
   locations: LocationRecord[];
   activeIndex: number;
+  config: LayoutConfig;
+  routePattern: RoutePattern;
   onSelect: (index: number) => void;
 }) {
   const start = Math.max(0, activeIndex - 8);
@@ -918,7 +1070,7 @@ function RouteTimeline({
             >
               <span>{routeIndex + 1}</span>
               <strong>{location.name}</strong>
-              <em>{location.side}</em>
+              <em>{routeSideForPattern(location, config, routePattern)}</em>
             </button>
           );
         })}
@@ -1086,6 +1238,7 @@ export default function Home() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [analysis, setAnalysis] = useState<UploadAnalysis | null>(null);
   const [mode, setMode] = useState<SourceMode>("generated");
+  const [routePattern, setRoutePattern] = useState<RoutePattern>("serpentine");
 
   const generatedLocations = useMemo(() => generateLocations(config), [config]);
   const uploadedLocations = analysis?.validLocations ?? [];
@@ -1143,6 +1296,12 @@ export default function Home() {
     setIsPlaying(false);
   };
 
+  const selectRoutePattern = (nextPattern: RoutePattern) => {
+    setRoutePattern(nextPattern);
+    setActiveIndex(0);
+    setIsPlaying(false);
+  };
+
   const handleDownload = () => {
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = window.URL.createObjectURL(blob);
@@ -1185,6 +1344,15 @@ export default function Home() {
       total={routeStops.length}
     />
   );
+  const simulationControls = (
+    <>
+      <RoutePatternSwitch
+        onChange={selectRoutePattern}
+        routePattern={routePattern}
+      />
+      {playbackControls}
+    </>
+  );
 
   return (
     <main className="app-shell">
@@ -1215,14 +1383,17 @@ export default function Home() {
               activeIndex={safeActiveIndex}
               config={activeConfig}
               locations={routeStops}
+              routePattern={routePattern}
             />
             <RouteTimeline
               activeIndex={safeActiveIndex}
+              config={activeConfig}
               locations={routeStops}
+              routePattern={routePattern}
               onSelect={setActiveIndex}
             />
           </div>
-          <aside className="simulation-side">{playbackControls}</aside>
+          <aside className="simulation-side">{simulationControls}</aside>
         </div>
       )}
 
@@ -1234,14 +1405,17 @@ export default function Home() {
               activeIndex={safeActiveIndex}
               config={activeConfig}
               locations={routeStops}
+              routePattern={routePattern}
             />
             <RouteTimeline
               activeIndex={safeActiveIndex}
+              config={activeConfig}
               locations={routeStops}
+              routePattern={routePattern}
               onSelect={setActiveIndex}
             />
           </div>
-          <aside className="simulation-side">{playbackControls}</aside>
+          <aside className="simulation-side">{simulationControls}</aside>
         </div>
       )}
 

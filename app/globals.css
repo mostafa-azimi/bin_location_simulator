@@ -135,6 +135,10 @@ button:disabled {
   color: var(--foreground);
 }
 
+.route-pattern-switch button {
+  flex: 1;
+}
+
 .page-grid,
 .simulation-grid {
   margin: 0 auto;
@@ -357,7 +361,7 @@ button:disabled {
   padding: 16px;
 }
 
-.serpentine-grid {
+.route-grid {
   align-items: stretch;
   display: grid;
   gap: 14px;
@@ -372,45 +376,52 @@ button:disabled {
   padding: 10px;
 }
 
-.serpentine-aisle {
-  grid-template-rows: auto 1fr;
+.route-aisle {
+  grid-template-rows: 1fr;
   min-height: 620px;
+  position: relative;
 }
 
-.aisle-header {
+.aisle-track-label {
   align-items: center;
+  background: rgba(225, 229, 220, 0.92);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  box-shadow: 0 8px 18px rgba(30, 41, 36, 0.12);
   display: flex;
   gap: 8px;
   justify-content: space-between;
+  left: 50%;
   min-width: 0;
+  padding: 6px 10px;
+  pointer-events: none;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%) rotate(-90deg);
+  white-space: nowrap;
+  z-index: 5;
 }
 
-.aisle-header strong {
-  background: white;
-  border: 2px solid var(--line-strong);
-  border-radius: 999px;
+.aisle-track-label strong {
   color: var(--foreground);
   font-size: 13px;
   font-weight: 760;
-  padding: 6px 10px;
 }
 
-.aisle-header span {
+.aisle-track-label span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 760;
-  overflow-wrap: anywhere;
-  text-align: right;
   text-transform: uppercase;
 }
 
-.serpentine-bay-stack {
+.route-bay-stack {
   display: grid;
   gap: 8px;
   min-height: 560px;
 }
 
-.serpentine-pair {
+.route-pair {
   align-items: stretch;
   display: grid;
   gap: 8px;
@@ -514,6 +525,10 @@ button:disabled {
 .aisle-track.down::after {
   border-top: 8px solid var(--line-strong);
   bottom: 6px;
+}
+
+.aisle-track.u-path::after {
+  display: none;
 }
 
 .pick-tether {

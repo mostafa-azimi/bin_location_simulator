@@ -10,7 +10,8 @@ movement, and exports a ShipHero upload CSV.
 - Create a generated warehouse layout from zones, aisles, bays, shelves, and slots
 - Generate location names with zone first and aisle letter second, for example
   `01A-01-A-01`
-- Simulate ShipHero's alphanumeric route order as a highlighted serpentine path
+- Simulate ShipHero's alphanumeric route order as a highlighted serpentine or
+  U-shape path
 - View a vertical overhead warehouse rectangle with aisle labels and every bay labeled
 - View an aisle-facing picker simulation with multiple bay sections visible
 - Adjust replay speed while playback is running
