@@ -15,6 +15,10 @@ type SourceMode = "generated" | "uploaded";
 type RoutePattern = "serpentine" | "u-shape";
 type TrackDirection = "up" | "down" | "u-path";
 type ThemeMode = "dark" | "light";
+type ViewportSize = {
+  width: number;
+  height: number;
+};
 
 type LayoutConfig = {
   zones: number;
@@ -64,7 +68,7 @@ type OverheadPathStop = {
 const defaultConfig: LayoutConfig = {
   zones: 1,
   aisles: 3,
-  bays: 8,
+  bays: 4,
   shelves: 3,
   slots: 4,
 };
@@ -72,7 +76,7 @@ const defaultConfig: LayoutConfig = {
 const inputLimits: Record<keyof LayoutConfig, number> = {
   zones: 6,
   aisles: 24,
-  bays: 48,
+  bays: 24,
   shelves: 8,
   slots: 12,
 };
@@ -80,7 +84,7 @@ const inputLimits: Record<keyof LayoutConfig, number> = {
 const labels: Record<keyof LayoutConfig, string> = {
   zones: "Zones",
   aisles: "Aisles",
-  bays: "Bays per aisle",
+  bays: "Bays per side",
   shelves: "Shelves per bay",
   slots: "Slots per shelf",
 };
@@ -104,6 +108,8 @@ const clampNumber = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, Number.isFinite(value) ? Math.floor(value) : min));
 
 const pad2 = (value: number) => String(value).padStart(2, "0");
+
+const totalBayCount = (config: LayoutConfig) => config.bays * 2;
 
 function lettersFromNumber(value: number) {
   let n = value;
@@ -232,21 +238,22 @@ function buildOverheadRows(
   routePattern: RoutePattern,
   aisleDirection: "up" | "down",
 ) {
-  if (routePattern === "u-shape") {
-    const leftSideCount = Math.ceil(config.bays / 2);
+  const baysPerSide = config.bays;
+  const totalBays = totalBayCount(config);
 
-    return Array.from({ length: leftSideCount }, (_, index) => ({
-      leftBay: leftSideCount - index,
+  if (routePattern === "u-shape") {
+    return Array.from({ length: baysPerSide }, (_, index) => ({
+      leftBay: baysPerSide - index,
       rightBay:
-        leftSideCount + index + 1 <= config.bays
-          ? leftSideCount + index + 1
+        baysPerSide + index + 1 <= totalBays
+          ? baysPerSide + index + 1
           : null,
     }));
   }
 
-  const pairs = Array.from({ length: Math.ceil(config.bays / 2) }, (_, index) => ({
+  const pairs = Array.from({ length: baysPerSide }, (_, index) => ({
     odd: index * 2 + 1,
-    even: index * 2 + 2 <= config.bays ? index * 2 + 2 : null,
+    even: index * 2 + 2 <= totalBays ? index * 2 + 2 : null,
   }));
   const physicalPairs = aisleDirection === "up" ? [...pairs].reverse() : pairs;
 
@@ -304,10 +311,11 @@ function buildOverheadPath(config: LayoutConfig, routePattern: RoutePattern) {
 
 function generateLocations(config: LayoutConfig) {
   const locations: LocationRecord[] = [];
+  const totalBays = totalBayCount(config);
 
   for (let zone = 1; zone <= config.zones; zone += 1) {
     for (let aisle = 1; aisle <= config.aisles; aisle += 1) {
-      for (let bay = 1; bay <= config.bays; bay += 1) {
+      for (let bay = 1; bay <= totalBays; bay += 1) {
         for (let shelf = 1; shelf <= config.shelves; shelf += 1) {
           for (let slot = 1; slot <= config.slots; slot += 1) {
             const parsed = parseLocationName(
@@ -382,7 +390,7 @@ function inferConfig(records: LocationRecord[]): LayoutConfig {
     (max, record) => ({
       zones: Math.max(max.zones, record.zoneIndex),
       aisles: Math.max(max.aisles, record.aisle),
-      bays: Math.max(max.bays, record.bay),
+      bays: Math.max(max.bays, Math.ceil(record.bay / 2)),
       shelves: Math.max(max.shelves, record.shelfIndex),
       slots: Math.max(max.slots, record.slot),
     }),
@@ -642,6 +650,33 @@ function RandomPickControls({
   );
 }
 
+function ViewZoomControls({
+  zoom,
+  onZoomChange,
+}: {
+  zoom: number;
+  onZoomChange: (zoom: number) => void;
+}) {
+  return (
+    <div className="toolbar-group zoom-panel">
+      <span className="control-label">View zoom</span>
+      <label className="range-field speed-field">
+        <span>Zoom</span>
+        <input
+          max={3}
+          min={1}
+          onChange={(event) => onZoomChange(Number.parseFloat(event.target.value))}
+          onInput={(event) => onZoomChange(Number.parseFloat(event.currentTarget.value))}
+          step={0.05}
+          type="range"
+          value={zoom}
+        />
+        <strong>{Math.round(zoom * 100)}%</strong>
+      </label>
+    </div>
+  );
+}
+
 function PlaybackControls({
   activeLabel,
   activeIndex,
@@ -790,15 +825,19 @@ function OverheadRoute({
   controls,
   config,
   speedMs,
+  zoom,
   routePattern,
   pathStops,
+  viewportSize,
 }: {
   activeIndex: number;
   controls: ReactNode;
   config: LayoutConfig;
   speedMs: number;
+  zoom: number;
   routePattern: RoutePattern;
   pathStops: OverheadPathStop[];
+  viewportSize: ViewportSize;
 }) {
   const activePathStop = pathStops[activeIndex];
   const activeZoneIndex = activePathStop?.zoneIndex ?? 1;
@@ -809,8 +848,25 @@ function OverheadRoute({
   }, [activeIndex, pathStops]);
   const zones = Array.from({ length: config.zones }, (_, index) => index + 1);
   const aisles = Array.from({ length: config.aisles }, (_, index) => index + 1);
+  const totalBays = totalBayCount(config);
+  const naturalAisleWidth = 128;
+  const naturalBayRowHeight = 78;
+  const naturalWidth = Math.max(1, config.aisles) * naturalAisleWidth;
+  const naturalZoneHeight =
+    config.bays * naturalBayRowHeight + (config.zones > 1 ? 36 : 0);
+  const naturalHeight =
+    Math.max(1, config.zones) * naturalZoneHeight + Math.max(0, config.zones - 1) * 12;
+  const availableWidth = Math.max(320, Math.min(1640, viewportSize.width - 68));
+  const availableHeight = Math.max(240, viewportSize.height - 370);
+  const fitScale = Math.min(
+    1,
+    availableWidth / naturalWidth,
+    availableHeight / naturalHeight,
+  );
+  const layoutScale = Number((fitScale * zoom).toFixed(3));
   const simulationStyle = {
     "--glide-ms": `${speedMs}ms`,
+    "--layout-scale": layoutScale,
   } as CSSProperties;
   const renderBay = (
     bay: number | null,
@@ -818,7 +874,7 @@ function OverheadRoute({
     className: string,
     style: CSSProperties,
   ) =>
-    bay && bay <= config.bays ? (
+    bay && bay <= totalBays ? (
       <div className={`warehouse-bay ${className}`} key={key} style={style}>
         <span>Bay {pad2(bay)}</span>
       </div>
@@ -838,110 +894,112 @@ function OverheadRoute({
       {controls}
 
       <div className="warehouse-scroll">
-        <div
-          className="warehouse-outline route-outline"
-          style={{ "--zone-count": config.zones } as CSSProperties}
-        >
-          {zones.map((zone) => {
-            const zoneLabel = pad2(zone);
+        <div className="warehouse-zoom-surface">
+          <div
+            className="warehouse-outline route-outline"
+            style={{ "--zone-count": config.zones } as CSSProperties}
+          >
+            {zones.map((zone) => {
+              const zoneLabel = pad2(zone);
 
-            return (
-              <div className="zone-layout" key={zone}>
-                {config.zones > 1 && <div className="zone-label">Zone {zoneLabel}</div>}
-                <div
-                  className="route-grid"
-                  style={{ gridTemplateColumns: `repeat(${config.aisles}, minmax(132px, 1fr))` }}
-                >
-                  {aisles.map((aisle) => {
-                    const aisleLabel = lettersFromNumber(aisle);
-                    const direction =
-                      routePattern === "serpentine" && aisle % 2 === 0 ? "down" : "up";
-                    const rows = buildOverheadRows(config, routePattern, direction);
-                    const rowKeys = rows.map(({ leftBay, rightBay }) =>
-                      overheadRowKey(zone, aisle, leftBay, rightBay),
-                    );
-                    const activeRowIndex = rows.findIndex(
-                      ({ leftBay, rightBay }) =>
-                        activePathStop?.rowKey ===
+              return (
+                <div className="zone-layout" key={zone}>
+                  {config.zones > 1 && <div className="zone-label">Zone {zoneLabel}</div>}
+                  <div
+                    className="route-grid"
+                    style={{ gridTemplateColumns: `repeat(${config.aisles}, max-content)` }}
+                  >
+                    {aisles.map((aisle) => {
+                      const aisleLabel = lettersFromNumber(aisle);
+                      const direction =
+                        routePattern === "serpentine" && aisle % 2 === 0 ? "down" : "up";
+                      const rows = buildOverheadRows(config, routePattern, direction);
+                      const rowKeys = rows.map(({ leftBay, rightBay }) =>
                         overheadRowKey(zone, aisle, leftBay, rightBay),
-                    );
-                    const isActiveAisle =
-                      activeZoneIndex === zone && activePathStop?.aisle === aisle;
-                    const activeTrackDirection =
-                      isActiveAisle && activePathStop
-                        ? activePathStop.trackDirection
-                        : routePattern === "u-shape"
-                          ? "u-path"
-                          : direction;
-                    const completedAisle =
-                      rowKeys.length > 0 && rowKeys.every((rowKey) => visitedRows.has(rowKey));
-                    const pickerTop =
-                      activeRowIndex >= 0
-                        ? `${((activeRowIndex + 0.5) / rows.length) * 100}%`
-                        : direction === "up"
-                          ? "100%"
-                          : "0%";
+                      );
+                      const activeRowIndex = rows.findIndex(
+                        ({ leftBay, rightBay }) =>
+                          activePathStop?.rowKey ===
+                          overheadRowKey(zone, aisle, leftBay, rightBay),
+                      );
+                      const isActiveAisle =
+                        activeZoneIndex === zone && activePathStop?.aisle === aisle;
+                      const activeTrackDirection =
+                        isActiveAisle && activePathStop
+                          ? activePathStop.trackDirection
+                          : routePattern === "u-shape"
+                            ? "u-path"
+                            : direction;
+                      const completedAisle =
+                        rowKeys.length > 0 && rowKeys.every((rowKey) => visitedRows.has(rowKey));
+                      const pickerTop =
+                        activeRowIndex >= 0
+                          ? `${((activeRowIndex + 0.5) / rows.length) * 100}%`
+                          : direction === "up"
+                            ? "100%"
+                            : "0%";
 
-                    return (
-                      <div
-                        className={`warehouse-aisle route-aisle ${routePattern} ${direction}`}
-                        key={aisle}
-                      >
+                      return (
                         <div
-                          className="route-bay-stack continuous-route-stack"
-                          style={
-                            {
-                              "--picker-top": pickerTop,
-                              gridTemplateRows: `repeat(${rows.length}, minmax(72px, 1fr))`,
-                            } as CSSProperties
-                          }
+                          className={`warehouse-aisle route-aisle ${routePattern} ${direction}`}
+                          key={aisle}
                         >
                           <div
-                            className={`aisle-track continuous-aisle-track ${activeTrackDirection} ${
-                              isActiveAisle ? "active" : ""
-                            } ${completedAisle ? "done" : ""}`}
-                            style={{ gridRow: `1 / span ${rows.length}` }}
+                            className="route-bay-stack continuous-route-stack"
+                            style={
+                              {
+                                "--picker-top": pickerTop,
+                                gridTemplateRows: `repeat(${rows.length}, minmax(72px, 1fr))`,
+                              } as CSSProperties
+                            }
                           >
-                            <div className="aisle-track-label">
-                              <strong>{zoneLabel}{aisleLabel}</strong>
-                            </div>
-                            {isActiveAisle && (
-                              <div className="overhead-picker">
-                                <span>Picker</span>
+                            <div
+                              className={`aisle-track continuous-aisle-track ${activeTrackDirection} ${
+                                isActiveAisle ? "active" : ""
+                              } ${completedAisle ? "done" : ""}`}
+                              style={{ gridRow: `1 / span ${rows.length}` }}
+                            >
+                              <div className="aisle-track-label">
+                                <strong>{zoneLabel}{aisleLabel}</strong>
                               </div>
-                            )}
+                              {isActiveAisle && (
+                                <div className="overhead-picker">
+                                  <span>Picker</span>
+                                </div>
+                              )}
+                            </div>
+
+                            {rows.flatMap(({ leftBay, rightBay }, rowIndex) => {
+                              const rowKey = overheadRowKey(zone, aisle, leftBay, rightBay);
+                              const isActivePair =
+                                activeZoneIndex === zone && activePathStop?.rowKey === rowKey;
+                              const isDonePair = visitedRows.has(rowKey);
+                              const bayStateClass = isActivePair
+                                ? "active"
+                                : isDonePair
+                                  ? "done"
+                                  : "";
+
+                              return [
+                                renderBay(leftBay, `${rowKey}-left`, bayStateClass, {
+                                  gridColumn: 1,
+                                  gridRow: rowIndex + 1,
+                                }),
+                                renderBay(rightBay, `${rowKey}-right`, bayStateClass, {
+                                  gridColumn: 3,
+                                  gridRow: rowIndex + 1,
+                                }),
+                              ];
+                            })}
                           </div>
-
-                          {rows.flatMap(({ leftBay, rightBay }, rowIndex) => {
-                            const rowKey = overheadRowKey(zone, aisle, leftBay, rightBay);
-                            const isActivePair =
-                              activeZoneIndex === zone && activePathStop?.rowKey === rowKey;
-                            const isDonePair = visitedRows.has(rowKey);
-                            const bayStateClass = isActivePair
-                              ? "active"
-                              : isDonePair
-                                ? "done"
-                                : "";
-
-                            return [
-                              renderBay(leftBay, `${rowKey}-left`, bayStateClass, {
-                                gridColumn: 1,
-                                gridRow: rowIndex + 1,
-                              }),
-                              renderBay(rightBay, `${rowKey}-right`, bayStateClass, {
-                                gridColumn: 3,
-                                gridRow: rowIndex + 1,
-                              }),
-                            ];
-                          })}
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       </div>
     </section>
@@ -964,7 +1022,7 @@ function RackBay({
   sideLabel: RouteSide;
 }) {
   const shelves = Array.from({ length: config.shelves }, (_, index) => config.shelves - index);
-  const slots = Array.from({ length: config.slots }, (_, index) => index + 1);
+  const slots = Array.from({ length: config.slots }, (_, index) => config.slots - index);
 
   return (
     <div className={`rack-bay side-${sideLabel} ${bay === active?.bay ? "active-bay" : ""}`}>
@@ -974,7 +1032,7 @@ function RackBay({
       </div>
       <div
         className="shelf-stack"
-        style={{ gridTemplateColumns: `repeat(${config.shelves}, minmax(22px, 42px))` }}
+        style={{ gridTemplateColumns: `repeat(${config.shelves}, minmax(16px, 20px))` }}
       >
         {shelves.map((shelf) => (
           <div className="shelf-row" key={`${bay}-${shelf}`}>
@@ -1344,6 +1402,11 @@ export default function Home() {
   const [routePattern, setRoutePattern] = useState<RoutePattern>("serpentine");
   const [randomPickCount, setRandomPickCount] = useState(8);
   const [randomPickSeed, setRandomPickSeed] = useState(1);
+  const [overheadZoom, setOverheadZoom] = useState(1);
+  const [viewportSize, setViewportSize] = useState<ViewportSize>({
+    width: 1280,
+    height: 900,
+  });
 
   const generatedLocations = useMemo(() => generateLocations(config), [config]);
   const uploadedLocations = analysis?.validLocations ?? [];
@@ -1405,6 +1468,20 @@ export default function Home() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+
+  useEffect(() => {
+    const updateViewportSize = () => {
+      setViewportSize({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      });
+    };
+
+    updateViewportSize();
+    window.addEventListener("resize", updateViewportSize);
+
+    return () => window.removeEventListener("resize", updateViewportSize);
+  }, []);
 
   useEffect(() => {
     if (!isPlaying || !isSimulatorPage || simulationTotal === 0) {
@@ -1505,15 +1582,23 @@ export default function Home() {
   const simulationControls = ({
     showRandomPickControls,
     showRoutePattern,
+    showZoomControls,
   }: {
     showRandomPickControls: boolean;
     showRoutePattern: boolean;
+    showZoomControls: boolean;
   }) => (
     <div className="simulation-controls">
       {showRoutePattern && (
         <RoutePatternSwitch
           onChange={selectRoutePattern}
           routePattern={routePattern}
+        />
+      )}
+      {showZoomControls && (
+        <ViewZoomControls
+          onZoomChange={setOverheadZoom}
+          zoom={overheadZoom}
         />
       )}
       {showRandomPickControls && (
@@ -1567,11 +1652,14 @@ export default function Home() {
               controls={simulationControls({
                 showRandomPickControls: false,
                 showRoutePattern: true,
+                showZoomControls: true,
               })}
               config={activeConfig}
               pathStops={overheadPath}
               routePattern={routePattern}
               speedMs={speedMs}
+              viewportSize={viewportSize}
+              zoom={overheadZoom}
             />
           </div>
         </div>
@@ -1586,6 +1674,7 @@ export default function Home() {
               controls={simulationControls({
                 showRandomPickControls: true,
                 showRoutePattern: false,
+                showZoomControls: false,
               })}
               config={activeConfig}
               locations={aislePickStops}
