@@ -449,6 +449,10 @@ button:disabled {
   min-width: 520px;
 }
 
+.playback-panel.no-active-label {
+  grid-template-columns: minmax(74px, 0.24fr) minmax(170px, 0.8fr) minmax(190px, 1.12fr) minmax(150px, 0.72fr);
+}
+
 .compact-heading {
   align-items: center;
   display: flex;

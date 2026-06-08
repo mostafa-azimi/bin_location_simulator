@@ -119,7 +119,7 @@ const labels: Record<keyof LayoutConfig, string> = {
 const pageLabels: Array<{ key: PageKey; label: string }> = [
   { key: "create", label: "Create" },
   { key: "overhead", label: "Overhead" },
-  { key: "aisle", label: "Aisle" },
+  { key: "aisle", label: "Simulator" },
   { key: "output", label: "Output" },
 ];
 
@@ -921,6 +921,7 @@ function ViewZoomControls({
 function PlaybackControls({
   activeLabel,
   activeIndex,
+  showActiveLabel = true,
   total,
   isPlaying,
   speedMs,
@@ -931,6 +932,7 @@ function PlaybackControls({
 }: {
   activeLabel: string;
   activeIndex: number;
+  showActiveLabel?: boolean;
   total: number;
   isPlaying: boolean;
   speedMs: number;
@@ -940,9 +942,9 @@ function PlaybackControls({
   onSpeedChange: (speedMs: number) => void;
 }) {
   return (
-    <div className="toolbar-group playback-panel">
+    <div className={`toolbar-group playback-panel ${showActiveLabel ? "" : "no-active-label"}`}>
       <div className="compact-heading">
-        <span className="control-label">{activeLabel}</span>
+        {showActiveLabel && <span className="control-label">{activeLabel}</span>}
         <span className="small-badge">{total ? `${activeIndex + 1} / ${total}` : "0 / 0"}</span>
       </div>
 
@@ -1731,8 +1733,7 @@ function AisleBayInspector({
     <section className="panel visualization-panel aisle-visualization" style={simulationStyle}>
       <div className="panel-heading">
         <div>
-          <p className="eyebrow">Aisle simulation</p>
-          <h2>{baySelectionLabel(selectedBay)}</h2>
+          <h2>Bay simulator</h2>
         </div>
       </div>
       {controls}
@@ -2138,6 +2139,7 @@ export default function Home() {
       onReset={resetSimulation}
       onSeek={setActiveIndex}
       onSpeedChange={setSpeedMs}
+      showActiveLabel={activePage === "overhead"}
       speedMs={speedMs}
       total={simulationTotal}
     />
@@ -2177,8 +2179,8 @@ export default function Home() {
     <main className="app-shell">
       <header className="top-bar">
         <div>
-          <p className="eyebrow">ShipHero bin planning</p>
-          <h1>Bin route simulator</h1>
+          <p className="eyebrow">Warehouse location creator</p>
+          <h1>Simulator</h1>
         </div>
         <div className="top-actions">
           <PageTabs
