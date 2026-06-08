@@ -472,9 +472,30 @@ button:disabled {
   min-height: 38px;
 }
 
+.zoom-button-row {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: 42px 1fr 42px;
+}
+
 .visualization-panel {
   min-width: 0;
   overflow: hidden;
+}
+
+.interactive-zoom-viewport {
+  cursor: grab;
+  user-select: none;
+}
+
+.interactive-zoom-viewport.dragging {
+  cursor: grabbing;
+}
+
+.interactive-zoom-viewport button,
+.interactive-zoom-viewport input,
+.interactive-zoom-viewport label {
+  cursor: pointer;
 }
 
 .warehouse-scroll {
@@ -488,8 +509,9 @@ button:disabled {
 }
 
 .warehouse-zoom-surface {
-  transform: scale(var(--layout-scale, 1));
+  transform: translate(var(--zoom-pan-x, 0), var(--zoom-pan-y, 0)) scale(var(--layout-scale, 1));
   transform-origin: top center;
+  will-change: transform;
 }
 
 .warehouse-outline {
@@ -869,8 +891,9 @@ button:disabled {
 }
 
 .bay-selector-zoom-surface {
-  transform: scale(var(--selector-scale, 1));
+  transform: translate(var(--selector-pan-x, 0), var(--selector-pan-y, 0)) scale(var(--selector-scale, 1));
   transform-origin: top center;
+  will-change: transform;
 }
 
 .bay-selector-outline {

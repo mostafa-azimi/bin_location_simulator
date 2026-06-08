@@ -3,9 +3,13 @@
 import {
   ChangeEvent,
   CSSProperties,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
   ReactNode,
+  WheelEvent as ReactWheelEvent,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -23,6 +27,17 @@ type BaySelection = {
   zoneIndex: number;
   aisle: number;
   bay: number;
+};
+type PanPoint = {
+  x: number;
+  y: number;
+};
+type PanZoomDrag = {
+  panX: number;
+  panY: number;
+  pointerId: number;
+  startX: number;
+  startY: number;
 };
 
 type LayoutConfig = {
@@ -116,6 +131,9 @@ const alphaSort = (a: string, b: string) =>
 
 const clampNumber = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, Number.isFinite(value) ? Math.floor(value) : min));
+
+const clampValue = (value: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, Number.isFinite(value) ? value : min));
 
 const pad2 = (value: number) => String(value).padStart(2, "0");
 
@@ -223,6 +241,141 @@ function isSameBaySelection(left: BaySelection, right: BaySelection) {
     left.aisle === right.aisle &&
     left.bay === right.bay
   );
+}
+
+function usePanZoom({
+  baseScale,
+  maxZoom,
+  minZoom,
+  onPanChange,
+  onZoomChange,
+  pan,
+  zoom,
+}: {
+  baseScale: number;
+  maxZoom: number;
+  minZoom: number;
+  onPanChange: (pan: PanPoint) => void;
+  onZoomChange: (zoom: number) => void;
+  pan: PanPoint;
+  zoom: number;
+}) {
+  const dragRef = useRef<PanZoomDrag | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const currentScale = Math.max(0.001, baseScale * zoom);
+
+  const zoomAroundPoint = (
+    viewport: HTMLElement,
+    clientX: number,
+    clientY: number,
+    nextZoom: number,
+  ) => {
+    const rect = viewport.getBoundingClientRect();
+    const pointX = clientX - rect.left - rect.width / 2;
+    const pointY = clientY - rect.top;
+    const clampedZoom = clampValue(nextZoom, minZoom, maxZoom);
+    const nextScale = Math.max(0.001, baseScale * clampedZoom);
+    const ratio = nextScale / currentScale;
+
+    onPanChange({
+      x: pointX - (pointX - pan.x) * ratio,
+      y: pointY - (pointY - pan.y) * ratio,
+    });
+    onZoomChange(clampedZoom);
+  };
+
+  const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    event.preventDefault();
+
+    if (event.deltaY === 0) {
+      return;
+    }
+
+    const factor = event.deltaY < 0 ? 1.12 : 0.88;
+    zoomAroundPoint(
+      event.currentTarget,
+      event.clientX,
+      event.clientY,
+      zoom * factor,
+    );
+  };
+
+  const handleDoubleClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (event.target instanceof HTMLElement && event.target.closest("button")) {
+      return;
+    }
+
+    zoomAroundPoint(
+      event.currentTarget,
+      event.clientX,
+      event.clientY,
+      zoom * 1.45,
+    );
+  };
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    if (
+      event.target instanceof HTMLElement &&
+      event.target.closest("button,input,label")
+    ) {
+      return;
+    }
+
+    dragRef.current = {
+      panX: pan.x,
+      panY: pan.y,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+    setIsDragging(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    onPanChange({
+      x: drag.panX + event.clientX - drag.startX,
+      y: drag.panY + event.clientY - drag.startY,
+    });
+  };
+
+  const endDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    dragRef.current = null;
+    setIsDragging(false);
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  return {
+    handlers: {
+      onDoubleClick: handleDoubleClick,
+      onPointerCancel: endDrag,
+      onPointerDown: handlePointerDown,
+      onPointerLeave: endDrag,
+      onPointerMove: handlePointerMove,
+      onPointerUp: endDrag,
+      onWheel: handleWheel,
+    },
+    isDragging,
+  };
 }
 
 function buildOverheadRows(
@@ -713,17 +866,34 @@ function RoutePatternSwitch({
 function ViewZoomControls({
   zoom,
   onZoomChange,
+  onZoomIn,
+  onZoomOut,
+  onZoomReset,
 }: {
   zoom: number;
   onZoomChange: (zoom: number) => void;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onZoomReset: () => void;
 }) {
   return (
     <div className="toolbar-group zoom-panel">
       <span className="control-label">View zoom</span>
+      <div className="zoom-button-row">
+        <button className="ghost-action compact-action" onClick={onZoomOut} type="button">
+          -
+        </button>
+        <button className="ghost-action compact-action" onClick={onZoomReset} type="button">
+          Reset
+        </button>
+        <button className="ghost-action compact-action" onClick={onZoomIn} type="button">
+          +
+        </button>
+      </div>
       <label className="range-field speed-field">
         <span>Zoom</span>
         <input
-          max={3}
+          max={4}
           min={1}
           onChange={(event) => onZoomChange(Number.parseFloat(event.target.value))}
           onInput={(event) => onZoomChange(Number.parseFloat(event.currentTarget.value))}
@@ -925,6 +1095,9 @@ function OverheadRoute({
   activeIndex,
   controls,
   config,
+  onPanChange,
+  onZoomChange,
+  pan,
   speedMs,
   zoom,
   routePattern,
@@ -934,6 +1107,9 @@ function OverheadRoute({
   activeIndex: number;
   controls: ReactNode;
   config: LayoutConfig;
+  onPanChange: (pan: PanPoint) => void;
+  onZoomChange: (zoom: number) => void;
+  pan: PanPoint;
   speedMs: number;
   zoom: number;
   routePattern: RoutePattern;
@@ -975,10 +1151,21 @@ function OverheadRoute({
     availableWidth / naturalWidth,
     availableHeight / naturalHeight,
   );
-  const layoutScale = Number((fitScale * zoom).toFixed(3));
+  const layoutScale = Number((fitScale * zoom).toFixed(4));
+  const panZoom = usePanZoom({
+    baseScale: fitScale,
+    maxZoom: 4,
+    minZoom: 1,
+    onPanChange,
+    onZoomChange,
+    pan,
+    zoom,
+  });
   const simulationStyle = {
     "--glide-ms": `${speedMs}ms`,
     "--layout-scale": layoutScale,
+    "--zoom-pan-x": `${pan.x}px`,
+    "--zoom-pan-y": `${pan.y}px`,
   } as CSSProperties;
   const renderBay = (
     bay: number | null,
@@ -1005,7 +1192,12 @@ function OverheadRoute({
       </div>
       {controls}
 
-      <div className="warehouse-scroll">
+      <div
+        className={`warehouse-scroll interactive-zoom-viewport ${
+          panZoom.isDragging ? "dragging" : ""
+        }`}
+        {...panZoom.handlers}
+      >
         <div className="warehouse-zoom-surface">
           <div
             className="warehouse-outline route-outline"
@@ -1182,6 +1374,8 @@ function BaySelectorMap({
 }) {
   const zones = Array.from({ length: config.zones }, (_, index) => index + 1);
   const aisles = Array.from({ length: config.aisles }, (_, index) => index + 1);
+  const [selectorZoom, setSelectorZoom] = useState(1);
+  const [selectorPan, setSelectorPan] = useState<PanPoint>({ x: 0, y: 0 });
   const totalBays = totalBayCount(config);
   const naturalAisleWidth = 84;
   const naturalBayRowHeight = 52;
@@ -1197,10 +1391,24 @@ function BaySelectorMap({
       ? Math.max(280, viewportSize.width - 76)
       : Math.max(320, Math.min(720, viewportSize.width * 0.42 - 54));
   const availableHeight = Math.max(300, viewportSize.height - 330);
-  const selectorScale = Number(
-    Math.min(1, availableWidth / naturalWidth, availableHeight / naturalHeight).toFixed(3),
+  const selectorFitScale = Math.min(
+    1,
+    availableWidth / naturalWidth,
+    availableHeight / naturalHeight,
   );
+  const selectorScale = Number((selectorFitScale * selectorZoom).toFixed(4));
+  const selectorPanZoom = usePanZoom({
+    baseScale: selectorFitScale,
+    maxZoom: 4,
+    minZoom: 1,
+    onPanChange: setSelectorPan,
+    onZoomChange: setSelectorZoom,
+    pan: selectorPan,
+    zoom: selectorZoom,
+  });
   const selectorStyle = {
+    "--selector-pan-x": `${selectorPan.x}px`,
+    "--selector-pan-y": `${selectorPan.y}px`,
     "--selector-scale": selectorScale,
     "--selector-height": `${availableHeight}px`,
   } as CSSProperties;
@@ -1242,7 +1450,13 @@ function BaySelectorMap({
         <span className="control-label">Overhead selector</span>
         <strong>{baySelectionName(selectedBay)}</strong>
       </div>
-      <div className="bay-selector-viewport" style={selectorStyle}>
+      <div
+        className={`bay-selector-viewport interactive-zoom-viewport ${
+          selectorPanZoom.isDragging ? "dragging" : ""
+        }`}
+        style={selectorStyle}
+        {...selectorPanZoom.handlers}
+      >
         <div className="bay-selector-zoom-surface">
           <div className="bay-selector-outline">
             {zones.map((zone) => {
@@ -1676,6 +1890,7 @@ export default function Home() {
     bay: 1,
   });
   const [overheadZoom, setOverheadZoom] = useState(1);
+  const [overheadPan, setOverheadPan] = useState<PanPoint>({ x: 0, y: 0 });
   const [viewportSize, setViewportSize] = useState<ViewportSize>({
     width: 1280,
     height: 900,
@@ -1805,6 +2020,23 @@ export default function Home() {
     setIsPlaying(false);
   };
 
+  const updateOverheadZoom = (zoom: number) => {
+    setOverheadZoom(clampValue(zoom, 1, 4));
+  };
+
+  const zoomOverheadIn = () => {
+    updateOverheadZoom(overheadZoom * 1.2);
+  };
+
+  const zoomOverheadOut = () => {
+    updateOverheadZoom(overheadZoom / 1.2);
+  };
+
+  const resetOverheadView = () => {
+    setOverheadZoom(1);
+    setOverheadPan({ x: 0, y: 0 });
+  };
+
   const handleDownload = () => {
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = window.URL.createObjectURL(blob);
@@ -1859,12 +2091,15 @@ export default function Home() {
             routePattern={routePattern}
           />
         )}
-        {showZoomControls && (
-          <ViewZoomControls
-            onZoomChange={setOverheadZoom}
-            zoom={overheadZoom}
-          />
-        )}
+      {showZoomControls && (
+        <ViewZoomControls
+          onZoomChange={updateOverheadZoom}
+          onZoomIn={zoomOverheadIn}
+          onZoomOut={zoomOverheadOut}
+          onZoomReset={resetOverheadView}
+          zoom={overheadZoom}
+        />
+      )}
         {playbackControls}
       </div>
     );
@@ -1911,6 +2146,9 @@ export default function Home() {
                 showZoomControls: true,
               })}
               config={activeConfig}
+              onPanChange={setOverheadPan}
+              onZoomChange={updateOverheadZoom}
+              pan={overheadPan}
               pathStops={overheadPath}
               routePattern={routePattern}
               speedMs={speedMs}
