@@ -47,6 +47,7 @@ type LayoutConfig = {
   shelves: number;
   slots: number;
 };
+type LayoutDraftConfig = Record<keyof LayoutConfig, string>;
 
 type LocationRecord = {
   name: string;
@@ -97,6 +98,7 @@ const defaultConfig: LayoutConfig = {
   shelves: 3,
   slots: 4,
 };
+const layoutConfigKeys = Object.keys(defaultConfig) as Array<keyof LayoutConfig>;
 
 const inputLimits: Record<keyof LayoutConfig, number> = {
   zones: 6,
@@ -134,6 +136,15 @@ const clampNumber = (value: number, min: number, max: number) =>
 
 const clampValue = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, Number.isFinite(value) ? value : min));
+
+const configToDraft = (config: LayoutConfig): LayoutDraftConfig =>
+  layoutConfigKeys.reduce(
+    (draft, key) => ({
+      ...draft,
+      [key]: String(config[key]),
+    }),
+    {} as LayoutDraftConfig,
+  );
 
 const pad2 = (value: number) => String(value).padStart(2, "0");
 
@@ -977,18 +988,20 @@ function PlaybackControls({
 }
 
 function CreatePage({
-  config,
+  configDraft,
   generatedLocations,
   mode,
   canUseUploaded,
-  onConfigChange,
+  onConfigBlur,
+  onConfigDraftChange,
   onSourceChange,
 }: {
-  config: LayoutConfig;
+  configDraft: LayoutDraftConfig;
   generatedLocations: LocationRecord[];
   mode: SourceMode;
   canUseUploaded: boolean;
-  onConfigChange: (key: keyof LayoutConfig, value: number) => void;
+  onConfigBlur: (key: keyof LayoutConfig) => void;
+  onConfigDraftChange: (key: keyof LayoutConfig, value: string) => void;
   onSourceChange: (mode: SourceMode) => void;
 }) {
   return (
@@ -1001,17 +1014,18 @@ function CreatePage({
           </div>
         </div>
         <div className="input-grid wide">
-          {(Object.keys(config) as Array<keyof LayoutConfig>).map((key) => (
+          {layoutConfigKeys.map((key) => (
             <label className="number-field" key={key}>
               <span>{labels[key]}</span>
               <input
                 max={inputLimits[key]}
                 min={1}
                 onChange={(event) =>
-                  onConfigChange(key, Number.parseInt(event.target.value, 10))
+                  onConfigDraftChange(key, event.target.value)
                 }
+                onBlur={() => onConfigBlur(key)}
                 type="number"
-                value={config[key]}
+                value={configDraft[key]}
               />
             </label>
           ))}
@@ -1901,6 +1915,9 @@ function OutputPage({
 export default function Home() {
   const [activePage, setActivePage] = useState<PageKey>("create");
   const [config, setConfig] = useState<LayoutConfig>(defaultConfig);
+  const [configDraft, setConfigDraft] = useState<LayoutDraftConfig>(() =>
+    configToDraft(defaultConfig),
+  );
   const [theme, setTheme] = useState<ThemeMode>("dark");
   const [activeIndex, setActiveIndex] = useState(0);
   const [speedMs, setSpeedMs] = useState(600);
@@ -2019,6 +2036,37 @@ export default function Home() {
       ...current,
       [key]: clampNumber(value, 1, inputLimits[key]),
     }));
+  };
+
+  const updateConfigDraft = (key: keyof LayoutConfig, value: string) => {
+    setConfigDraft((current) => ({
+      ...current,
+      [key]: value,
+    }));
+
+    if (value.trim() === "") {
+      return;
+    }
+
+    const parsedValue = Number(value);
+
+    if (Number.isFinite(parsedValue)) {
+      updateConfig(key, parsedValue);
+    }
+  };
+
+  const normalizeConfigDraft = (key: keyof LayoutConfig) => {
+    const rawValue = configDraft[key];
+    const parsedValue = rawValue.trim() === "" ? Number.NaN : Number(rawValue);
+    const normalizedValue = Number.isFinite(parsedValue)
+      ? clampNumber(parsedValue, 1, inputLimits[key])
+      : config[key];
+
+    setConfigDraft((current) => ({
+      ...current,
+      [key]: String(normalizedValue),
+    }));
+    updateConfig(key, normalizedValue);
   };
 
   const selectMode = (nextMode: SourceMode) => {
@@ -2152,10 +2200,11 @@ export default function Home() {
       {activePage === "create" && (
         <CreatePage
           canUseUploaded={canUseUploaded}
-          config={config}
+          configDraft={configDraft}
           generatedLocations={generatedLocations}
           mode={mode}
-          onConfigChange={updateConfig}
+          onConfigBlur={normalizeConfigDraft}
+          onConfigDraftChange={updateConfigDraft}
           onSourceChange={selectMode}
         />
       )}
