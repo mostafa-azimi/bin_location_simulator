@@ -1376,6 +1376,7 @@ function BaySelectorMap({
   const aisles = Array.from({ length: config.aisles }, (_, index) => index + 1);
   const [selectorZoom, setSelectorZoom] = useState(1);
   const [selectorPan, setSelectorPan] = useState<PanPoint>({ x: 0, y: 0 });
+  const selectedRouteContext = getBayRouteContext(config, routePattern, selectedBay);
   const totalBays = totalBayCount(config);
   const naturalAisleWidth = 84;
   const naturalBayRowHeight = 52;
@@ -1474,6 +1475,18 @@ function BaySelectorMap({
                         routePattern === "serpentine" && aisle % 2 === 0 ? "down" : "up";
                       const rows = buildOverheadRows(config, routePattern, direction);
                       const aislePrefix = `${zoneLabel}${lettersFromNumber(aisle)}`;
+                      const selectedRowIndex =
+                        selectedBay.zoneIndex === zone && selectedBay.aisle === aisle
+                          ? rows.findIndex(
+                              ({ leftBay, rightBay }) =>
+                                leftBay === selectedBay.bay ||
+                                rightBay === selectedBay.bay,
+                            )
+                          : -1;
+                      const selectorPickerTop =
+                        selectedRowIndex >= 0
+                          ? `${((selectedRowIndex + 0.5) / rows.length) * 100}%`
+                          : undefined;
                       const connectorSide =
                         routePattern === "u-shape"
                           ? "bottom"
@@ -1496,6 +1509,18 @@ function BaySelectorMap({
                               style={{ gridRow: `1 / span ${rows.length}` }}
                             >
                               <strong>{aislePrefix}</strong>
+                              {selectedRowIndex >= 0 && (
+                                <div
+                                  className={`selector-picker-position physical-${selectedRouteContext.physicalSide}`}
+                                  style={
+                                    {
+                                      "--selector-picker-top": selectorPickerTop,
+                                    } as CSSProperties
+                                  }
+                                >
+                                  <span>Picker</span>
+                                </div>
+                              )}
                             </div>
                             {rows.flatMap(({ leftBay, rightBay }, rowIndex) => [
                               renderBay(zone, aisle, leftBay, `${zone}-${aisle}-${rowIndex}-left`, "left", {
@@ -1619,7 +1644,6 @@ function BayFaceView({
                     title={name}
                   >
                     <span>{pad2(slot)}</span>
-                    {isActive && <span aria-hidden="true" className="bay-pick-item" />}
                   </div>
                 );
               })}
@@ -1632,6 +1656,7 @@ function BayFaceView({
 
   const picker = (
     <div className="bay-picker-stand">
+      <div aria-hidden="true" className="bay-picker-sightline" />
       <div className="bay-picker-marker">
         <span>Picker</span>
       </div>
@@ -1653,9 +1678,8 @@ function BayFaceView({
         <strong>{active?.name ?? baySelectionName(selectedBay)}</strong>
       </div>
       <div className={`bay-face-stage side-${side}`}>
-        {side === "right" && picker}
         {rack}
-        {side === "left" && picker}
+        {picker}
       </div>
     </div>
   );
