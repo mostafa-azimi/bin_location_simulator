@@ -260,6 +260,7 @@ function usePanZoom({
   minZoom,
   onPanChange,
   onZoomChange,
+  originY = "top",
   pan,
   zoom,
 }: {
@@ -268,6 +269,7 @@ function usePanZoom({
   minZoom: number;
   onPanChange: (pan: PanPoint) => void;
   onZoomChange: (zoom: number) => void;
+  originY?: "top" | "center";
   pan: PanPoint;
   zoom: number;
 }) {
@@ -283,7 +285,8 @@ function usePanZoom({
   ) => {
     const rect = viewport.getBoundingClientRect();
     const pointX = clientX - rect.left - rect.width / 2;
-    const pointY = clientY - rect.top;
+    const pointY =
+      clientY - rect.top - (originY === "center" ? rect.height / 2 : 0);
     const clampedZoom = clampValue(nextZoom, minZoom, maxZoom);
     const nextScale = Math.max(0.001, baseScale * clampedZoom);
     const ratio = nextScale / currentScale;
@@ -1394,13 +1397,17 @@ function BaySelectorMap({
   const [selectorPan, setSelectorPan] = useState<PanPoint>({ x: 0, y: 0 });
   const selectedRouteContext = getBayRouteContext(config, routePattern, selectedBay);
   const totalBays = totalBayCount(config);
-  const naturalAisleWidth = 84;
+  const naturalAisleWidth = 94;
   const naturalBayRowHeight = 52;
-  const naturalWidth = Math.max(1, config.aisles) * naturalAisleWidth;
+  const selectorPaddingX = 18;
+  const selectorPaddingY = 70;
+  const naturalWidth =
+    Math.max(1, config.aisles) * naturalAisleWidth + selectorPaddingX;
   const naturalZoneHeight =
     config.bays * naturalBayRowHeight +
     (config.aisles > 1 ? 62 : 0) +
-    (config.zones > 1 ? 34 : 0);
+    (config.zones > 1 ? 34 : 0) +
+    selectorPaddingY;
   const naturalHeight =
     Math.max(1, config.zones) * naturalZoneHeight + Math.max(0, config.zones - 1) * 10;
   const availableWidth =
@@ -1410,7 +1417,7 @@ function BaySelectorMap({
   const availableHeight = Math.max(300, viewportSize.height - 420);
   const selectorFitScale = clampValue(
     Math.min(availableWidth / naturalWidth, availableHeight / naturalHeight),
-    0.28,
+    0.12,
     2.05,
   );
   const selectorScale = Number((selectorFitScale * selectorZoom).toFixed(4));
@@ -1420,6 +1427,7 @@ function BaySelectorMap({
     minZoom: 1,
     onPanChange: setSelectorPan,
     onZoomChange: setSelectorZoom,
+    originY: "center",
     pan: selectorPan,
     zoom: selectorZoom,
   });
@@ -1740,6 +1748,7 @@ function AisleBayInspector({
       <div className="aisle-inspector-grid">
         <BaySelectorMap
           config={config}
+          key={`${config.zones}-${config.aisles}-${config.bays}-${config.shelves}-${config.slots}-${routePattern}`}
           onSelectBay={onSelectBay}
           routePattern={routePattern}
           selectedBay={selectedBay}

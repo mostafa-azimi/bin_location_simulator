@@ -885,7 +885,7 @@ button:disabled {
 }
 
 .bay-selector-viewport {
-  align-items: flex-start;
+  align-items: center;
   display: flex;
   height: var(--selector-height, 480px);
   justify-content: center;
@@ -896,7 +896,7 @@ button:disabled {
 
 .bay-selector-zoom-surface {
   transform: translate(var(--selector-pan-x, 0), var(--selector-pan-y, 0)) scale(var(--selector-scale, 1));
-  transform-origin: top center;
+  transform-origin: center center;
   will-change: transform;
 }
 
