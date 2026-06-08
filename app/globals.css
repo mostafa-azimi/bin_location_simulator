@@ -501,6 +501,10 @@ button:disabled {
   width: max-content;
 }
 
+.route-outline {
+  padding-block: 52px;
+}
+
 .zone-layout {
   min-width: 0;
 }
@@ -582,6 +586,97 @@ button:disabled {
   gap: 6px 0;
   justify-content: center;
   position: relative;
+}
+
+.route-turn-connector {
+  height: 52px;
+  left: 50%;
+  pointer-events: none;
+  position: absolute;
+  transform: translateX(0);
+  width: 116px;
+  z-index: 5;
+}
+
+.route-turn-connector.top {
+  top: -46px;
+}
+
+.route-turn-connector.bottom {
+  bottom: -46px;
+}
+
+.route-turn-connector.compact {
+  height: 36px;
+  width: 94px;
+}
+
+.route-turn-connector.compact.top {
+  top: -31px;
+}
+
+.route-turn-connector.compact.bottom {
+  bottom: -31px;
+}
+
+.route-turn-connector svg {
+  display: block;
+  height: 100%;
+  overflow: visible;
+  width: 100%;
+}
+
+.route-turn-connector path {
+  fill: none;
+  opacity: 0.7;
+  stroke: var(--line-strong);
+  stroke-dasharray: 7 7;
+  stroke-linecap: round;
+  stroke-width: 4;
+}
+
+.route-turn-connector.done path {
+  opacity: 0.9;
+  stroke: var(--teal);
+  stroke-dasharray: none;
+}
+
+.route-turn-connector.active path {
+  opacity: 1;
+  stroke: var(--amber);
+  stroke-dasharray: none;
+}
+
+.turn-picker {
+  align-items: center;
+  background: var(--foreground);
+  border: 3px solid var(--panel);
+  border-radius: 999px;
+  color: var(--background);
+  display: flex;
+  height: 40px;
+  justify-content: center;
+  left: 0;
+  offset-distance: 0%;
+  offset-path: path("M 0 50 C 0 8 116 8 116 50");
+  position: absolute;
+  top: 0;
+  transform: translate(-50%, -50%);
+  width: 40px;
+  z-index: 7;
+  animation: turnPickerWalk var(--glide-ms, 600ms) linear infinite;
+}
+
+.route-turn-connector.bottom .turn-picker {
+  offset-path: path("M 0 2 C 0 44 116 44 116 2");
+}
+
+.turn-picker span {
+  font-size: 8px;
+  font-weight: 760;
+  line-height: 1;
+  text-align: center;
+  text-transform: uppercase;
 }
 
 .warehouse-bay {
@@ -782,7 +877,7 @@ button:disabled {
   background: var(--warehouse);
   border: 1px solid var(--line);
   border-radius: 7px;
-  padding: 8px;
+  padding: 34px 8px;
   width: max-content;
 }
 
@@ -889,27 +984,23 @@ button:disabled {
   display: grid;
   min-height: 0;
   min-width: 0;
-  overflow: visible;
-  padding: 12px;
+  overflow: hidden;
+  padding: clamp(6px, calc(52px / var(--bay-shelves, 4)), 12px);
 }
 
 .bay-face-grid {
   display: grid;
-  gap: 8px;
+  gap: clamp(3px, calc(28px / var(--bay-shelves, 4)), 8px);
   min-height: 0;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .bay-face-shelf {
   display: grid;
-  gap: 8px;
-  grid-template-columns: 28px minmax(0, 1fr);
+  gap: clamp(4px, calc(32px / var(--bay-slots, 4)), 8px);
+  grid-template-columns: 34px minmax(0, 1fr);
   min-height: 0;
-  overflow: visible;
-}
-
-.side-right .bay-face-shelf {
-  grid-template-columns: minmax(0, 1fr) 28px;
+  overflow: hidden;
 }
 
 .bay-face-shelf-label {
@@ -919,30 +1010,19 @@ button:disabled {
   border-radius: 6px;
   color: var(--ink-soft);
   display: flex;
-  font-size: 13px;
+  font-size: clamp(11px, calc(50px / var(--bay-shelves, 4)), 14px);
   font-weight: 800;
   justify-content: center;
   min-height: 0;
   text-transform: uppercase;
-  transform: rotate(90deg);
-}
-
-.side-right .bay-face-shelf-label {
-  grid-column: 2;
-  transform: rotate(-90deg);
-}
-
-.side-right .bay-face-slot-row {
-  grid-column: 1;
-  grid-row: 1;
 }
 
 .bay-face-slot-row {
   display: grid;
-  gap: 8px;
+  gap: clamp(3px, calc(32px / var(--bay-slots, 4)), 8px);
   min-height: 0;
   min-width: 0;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .bay-face-slot {
@@ -952,13 +1032,17 @@ button:disabled {
   border-radius: 6px;
   color: var(--muted);
   display: flex;
-  font-size: 14px;
+  font-size: clamp(10px, calc(48px / var(--bay-slots, 4)), 15px);
   font-weight: 800;
   justify-content: center;
-  min-height: 52px;
+  min-height: 0;
   min-width: 0;
   overflow: visible;
   position: relative;
+}
+
+.bay-face-slot span {
+  line-height: 1;
 }
 
 .bay-face-slot.planned {
@@ -1599,6 +1683,16 @@ button:disabled {
   100% {
     opacity: 0;
     transform: translate(calc(0px - var(--pick-travel)), -50%) scale(0.55);
+  }
+}
+
+@keyframes turnPickerWalk {
+  from {
+    offset-distance: 0%;
+  }
+
+  to {
+    offset-distance: 100%;
   }
 }
 

@@ -13,7 +13,7 @@ type RouteSide = "left" | "right";
 type PageKey = "create" | "overhead" | "aisle" | "output";
 type SourceMode = "generated" | "uploaded";
 type RoutePattern = "serpentine" | "u-shape";
-type TrackDirection = "up" | "down" | "u-path";
+type TrackDirection = "up" | "down" | "u-path" | "turn-top" | "turn-bottom";
 type ThemeMode = "dark" | "light";
 type ViewportSize = {
   width: number;
@@ -62,12 +62,16 @@ type UploadAnalysis = {
 };
 
 type OverheadPathStop = {
+  kind: "row" | "turn";
   zoneIndex: number;
   zoneLabel: string;
   aisle: number;
   aisleLabel: string;
   rowKey: string;
   trackDirection: TrackDirection;
+  nextAisle?: number;
+  nextAisleLabel?: string;
+  turnSide?: "top" | "bottom";
 };
 
 const defaultConfig: LayoutConfig = {
@@ -259,6 +263,10 @@ function overheadRowKey(
   return `${zoneIndex}-${aisle}-${leftBay ?? "empty"}-${rightBay ?? "empty"}`;
 }
 
+function overheadTurnKey(zoneIndex: number, aisle: number, turnSide: "top" | "bottom") {
+  return `${zoneIndex}-${aisle}-${aisle + 1}-${turnSide}-turn`;
+}
+
 function buildOverheadPath(config: LayoutConfig, routePattern: RoutePattern) {
   const path: OverheadPathStop[] = [];
 
@@ -273,6 +281,7 @@ function buildOverheadPath(config: LayoutConfig, routePattern: RoutePattern) {
         trackDirection: TrackDirection,
       ) => {
         path.push({
+          kind: "row",
           zoneIndex: zone,
           zoneLabel: pad2(zone),
           aisle,
@@ -281,34 +290,75 @@ function buildOverheadPath(config: LayoutConfig, routePattern: RoutePattern) {
           trackDirection,
         });
       };
+      const addTurn = (turnSide: "top" | "bottom") => {
+        if (aisle >= config.aisles) {
+          return;
+        }
+
+        const nextAisleLabel = lettersFromNumber(aisle + 1);
+        path.push({
+          kind: "turn",
+          zoneIndex: zone,
+          zoneLabel: pad2(zone),
+          aisle,
+          aisleLabel,
+          nextAisle: aisle + 1,
+          nextAisleLabel,
+          rowKey: overheadTurnKey(zone, aisle, turnSide),
+          trackDirection: turnSide === "top" ? "turn-top" : "turn-bottom",
+          turnSide,
+        });
+      };
 
       if (routePattern === "u-shape") {
         [...rows].reverse().forEach((row) => addStop(row, "up"));
         rows.forEach((row) => addStop(row, "down"));
+        addTurn("bottom");
         continue;
       }
 
       const traversalRows = aisleDirection === "up" ? [...rows].reverse() : rows;
       traversalRows.forEach((row) => addStop(row, aisleDirection));
+      addTurn(aisleDirection === "up" ? "top" : "bottom");
     }
   }
 
   return path;
 }
 
-function getBayPhysicalSide(
+function getBayRouteContext(
   config: LayoutConfig,
   routePattern: RoutePattern,
   selection: BaySelection,
-): RouteSide {
+): {
+  facingSide: RouteSide;
+  physicalSide: RouteSide;
+  travelDirection: "up" | "down";
+} {
   const direction =
     routePattern === "serpentine" && selection.aisle % 2 === 0 ? "down" : "up";
   const rows = buildOverheadRows(config, routePattern, direction);
   const row = rows.find(
     ({ leftBay, rightBay }) => leftBay === selection.bay || rightBay === selection.bay,
   );
+  const physicalSide = row?.rightBay === selection.bay ? "right" : "left";
+  const travelDirection =
+    routePattern === "u-shape"
+      ? physicalSide === "left"
+        ? "up"
+        : "down"
+      : direction;
 
-  return row?.rightBay === selection.bay ? "right" : "left";
+  return {
+    facingSide:
+      travelDirection === "down"
+        ? physicalSide === "left"
+          ? "right"
+          : "left"
+        : physicalSide,
+    physicalSide,
+    travelDirection,
+  };
 }
 
 function buildBayPickStops(
@@ -813,6 +863,42 @@ function CreatePage({
   );
 }
 
+function RouteTurnConnector({
+  active,
+  compact = false,
+  done = false,
+  side,
+}: {
+  active: boolean;
+  compact?: boolean;
+  done?: boolean;
+  side: "top" | "bottom";
+}) {
+  return (
+    <div
+      aria-hidden="true"
+      className={`route-turn-connector ${compact ? "compact" : ""} ${side} ${
+        active ? "active" : ""
+      } ${done ? "done" : ""}`}
+    >
+      <svg preserveAspectRatio="none" viewBox="0 0 116 52">
+        <path
+          d={
+            side === "top"
+              ? "M 0 50 C 0 8 116 8 116 50"
+              : "M 0 2 C 0 44 116 44 116 2"
+          }
+        />
+      </svg>
+      {active && (
+        <div className="turn-picker">
+          <span>Picker</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OverheadRoute({
   activeIndex,
   controls,
@@ -846,7 +932,9 @@ function OverheadRoute({
   const naturalBayRowHeight = 78;
   const naturalWidth = Math.max(1, config.aisles) * naturalAisleWidth;
   const naturalZoneHeight =
-    config.bays * naturalBayRowHeight + (config.zones > 1 ? 36 : 0);
+    config.bays * naturalBayRowHeight +
+    (config.aisles > 1 ? 92 : 0) +
+    (config.zones > 1 ? 36 : 0);
   const naturalHeight =
     Math.max(1, config.zones) * naturalZoneHeight + Math.max(0, config.zones - 1) * 12;
   const availableWidth = Math.max(320, Math.min(1640, viewportSize.width - 68));
@@ -910,13 +998,29 @@ function OverheadRoute({
                       const rowKeys = rows.map(({ leftBay, rightBay }) =>
                         overheadRowKey(zone, aisle, leftBay, rightBay),
                       );
+                      const connectorSide =
+                        routePattern === "u-shape"
+                          ? "bottom"
+                          : direction === "up"
+                            ? "top"
+                            : "bottom";
+                      const connectorKey = overheadTurnKey(zone, aisle, connectorSide);
+                      const isActiveTurn =
+                        activePathStop?.kind === "turn" &&
+                        activePathStop.zoneIndex === zone &&
+                        activePathStop.aisle === aisle &&
+                        activePathStop.turnSide === connectorSide;
+                      const isDoneTurn = visitedRows.has(connectorKey);
                       const activeRowIndex = rows.findIndex(
                         ({ leftBay, rightBay }) =>
-                          activePathStop?.rowKey ===
+                          activePathStop?.kind === "row" &&
+                          activePathStop.rowKey ===
                           overheadRowKey(zone, aisle, leftBay, rightBay),
                       );
                       const isActiveAisle =
-                        activeZoneIndex === zone && activePathStop?.aisle === aisle;
+                        activePathStop?.kind === "row" &&
+                        activeZoneIndex === zone &&
+                        activePathStop.aisle === aisle;
                       const activeTrackDirection =
                         isActiveAisle && activePathStop
                           ? activePathStop.trackDirection
@@ -965,7 +1069,9 @@ function OverheadRoute({
                             {rows.flatMap(({ leftBay, rightBay }, rowIndex) => {
                               const rowKey = overheadRowKey(zone, aisle, leftBay, rightBay);
                               const isActivePair =
-                                activeZoneIndex === zone && activePathStop?.rowKey === rowKey;
+                                activePathStop?.kind === "row" &&
+                                activeZoneIndex === zone &&
+                                activePathStop.rowKey === rowKey;
                               const isDonePair = visitedRows.has(rowKey);
                               const bayStateClass = isActivePair
                                 ? "active"
@@ -984,6 +1090,13 @@ function OverheadRoute({
                                 }),
                               ];
                             })}
+                            {aisle < config.aisles && (
+                              <RouteTurnConnector
+                                active={isActiveTurn}
+                                done={isDoneTurn}
+                                side={connectorSide}
+                              />
+                            )}
                           </div>
                         </div>
                       );
@@ -1019,7 +1132,9 @@ function BaySelectorMap({
   const naturalBayRowHeight = 52;
   const naturalWidth = Math.max(1, config.aisles) * naturalAisleWidth;
   const naturalZoneHeight =
-    config.bays * naturalBayRowHeight + (config.zones > 1 ? 34 : 0);
+    config.bays * naturalBayRowHeight +
+    (config.aisles > 1 ? 62 : 0) +
+    (config.zones > 1 ? 34 : 0);
   const naturalHeight =
     Math.max(1, config.zones) * naturalZoneHeight + Math.max(0, config.zones - 1) * 10;
   const availableWidth =
@@ -1090,6 +1205,12 @@ function BaySelectorMap({
                         routePattern === "serpentine" && aisle % 2 === 0 ? "down" : "up";
                       const rows = buildOverheadRows(config, routePattern, direction);
                       const aislePrefix = `${zoneLabel}${lettersFromNumber(aisle)}`;
+                      const connectorSide =
+                        routePattern === "u-shape"
+                          ? "bottom"
+                          : direction === "up"
+                            ? "top"
+                            : "bottom";
 
                       return (
                         <div className="selector-aisle" key={`${zone}-${aisle}`}>
@@ -1117,6 +1238,13 @@ function BaySelectorMap({
                                 gridRow: rowIndex + 1,
                               }),
                             ])}
+                            {aisle < config.aisles && (
+                              <RouteTurnConnector
+                                active={false}
+                                compact
+                                side={connectorSide}
+                              />
+                            )}
                           </div>
                         </div>
                       );
@@ -1168,7 +1296,6 @@ function BayFaceView({
     (_, index) => config.shelves - index,
   );
   const slots = Array.from({ length: config.slots }, (_, index) => index + 1);
-  const visualSlots = side === "right" ? [...slots].reverse() : slots;
   const activeCoordinate = active
     ? pickCoordinateKey(
         active.zoneIndex,
@@ -1184,7 +1311,7 @@ function BayFaceView({
       <div
         className="bay-face-grid"
         style={{
-          gridTemplateRows: `repeat(${config.shelves}, minmax(58px, 1fr))`,
+          gridTemplateRows: `repeat(${config.shelves}, minmax(0, 1fr))`,
         }}
       >
         {shelves.map((shelf) => (
@@ -1192,9 +1319,9 @@ function BayFaceView({
             <span className="bay-face-shelf-label">{lettersFromNumber(shelf)}</span>
             <div
               className="bay-face-slot-row"
-              style={{ gridTemplateColumns: `repeat(${config.slots}, minmax(54px, 1fr))` }}
+              style={{ gridTemplateColumns: `repeat(${config.slots}, minmax(0, 1fr))` }}
             >
-              {visualSlots.map((slot) => {
+              {slots.map((slot) => {
                 const name = locationName(
                   selectedBay.zoneIndex,
                   selectedBay.aisle,
@@ -1243,7 +1370,15 @@ function BayFaceView({
   );
 
   return (
-    <div className={`bay-face-card side-${side}`}>
+    <div
+      className={`bay-face-card side-${side}`}
+      style={
+        {
+          "--bay-shelves": config.shelves,
+          "--bay-slots": config.slots,
+        } as CSSProperties
+      }
+    >
       <div className="bay-card-heading">
         <span className="control-label">Picker view</span>
         <strong>{active?.name ?? baySelectionName(selectedBay)}</strong>
@@ -1280,7 +1415,8 @@ function AisleBayInspector({
   speedMs: number;
   viewportSize: ViewportSize;
 }) {
-  const side = getBayPhysicalSide(config, routePattern, selectedBay);
+  const routeContext = getBayRouteContext(config, routePattern, selectedBay);
+  const side = routeContext.facingSide;
   const simulationStyle = {
     "--glide-ms": `${speedMs}ms`,
   } as CSSProperties;
@@ -1292,7 +1428,9 @@ function AisleBayInspector({
           <p className="eyebrow">Aisle simulation</p>
           <h2>{baySelectionLabel(selectedBay)}</h2>
         </div>
-        <span className="small-badge">{side} side</span>
+        <span className="small-badge">
+          {side} side, moving {routeContext.travelDirection}
+        </span>
       </div>
       {controls}
       <div className="aisle-inspector-grid">
@@ -1531,7 +1669,9 @@ export default function Home() {
   const activeLabel =
     activePage === "overhead"
       ? activePathStop
-        ? `Walking ${activePathStop.zoneLabel}${activePathStop.aisleLabel}`
+        ? activePathStop.kind === "turn"
+          ? `Turning to ${activePathStop.zoneLabel}${activePathStop.nextAisleLabel ?? ""}`
+          : `Walking ${activePathStop.zoneLabel}${activePathStop.aisleLabel}`
         : "Walking route"
       : activePick?.name ?? `${baySelectionName(normalizedSelectedBay)} sequence`;
   const csv = useMemo(() => buildShipHeroCsv(activeLocations), [activeLocations]);
