@@ -1404,12 +1404,12 @@ function BaySelectorMap({
   const availableWidth =
     viewportSize.width < 960
       ? Math.max(280, viewportSize.width - 76)
-      : Math.max(320, Math.min(720, viewportSize.width * 0.42 - 54));
-  const availableHeight = Math.max(300, viewportSize.height - 330);
-  const selectorFitScale = Math.min(
-    1,
-    availableWidth / naturalWidth,
-    availableHeight / naturalHeight,
+      : Math.max(340, Math.min(820, viewportSize.width * 0.52 - 54));
+  const availableHeight = Math.max(300, viewportSize.height - 420);
+  const selectorFitScale = clampValue(
+    Math.min(availableWidth / naturalWidth, availableHeight / naturalHeight),
+    0.28,
+    2.05,
   );
   const selectorScale = Number((selectorFitScale * selectorZoom).toFixed(4));
   const selectorPanZoom = usePanZoom({
@@ -1735,9 +1735,6 @@ function AisleBayInspector({
           <p className="eyebrow">Aisle simulation</p>
           <h2>{baySelectionLabel(selectedBay)}</h2>
         </div>
-        <span className="small-badge">
-          {side} side, moving {routeContext.travelDirection}
-        </span>
       </div>
       {controls}
       <div className="aisle-inspector-grid">
