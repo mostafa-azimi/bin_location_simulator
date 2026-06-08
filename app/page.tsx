@@ -63,6 +63,7 @@ type UploadAnalysis = {
 
 type OverheadPathStop = {
   kind: "row" | "turn";
+  activeBays: number[];
   zoneIndex: number;
   zoneLabel: string;
   aisle: number;
@@ -267,6 +268,10 @@ function overheadTurnKey(zoneIndex: number, aisle: number, turnSide: "top" | "bo
   return `${zoneIndex}-${aisle}-${aisle + 1}-${turnSide}-turn`;
 }
 
+function overheadBayKey(zoneIndex: number, aisle: number, bay: number) {
+  return `${zoneIndex}-${aisle}-${bay}`;
+}
+
 function buildOverheadPath(config: LayoutConfig, routePattern: RoutePattern) {
   const path: OverheadPathStop[] = [];
 
@@ -279,9 +284,13 @@ function buildOverheadPath(config: LayoutConfig, routePattern: RoutePattern) {
       const addStop = (
         row: { leftBay: number | null; rightBay: number | null },
         trackDirection: TrackDirection,
+        activeBays = [row.leftBay, row.rightBay].filter(
+          (bay): bay is number => typeof bay === "number",
+        ),
       ) => {
         path.push({
           kind: "row",
+          activeBays,
           zoneIndex: zone,
           zoneLabel: pad2(zone),
           aisle,
@@ -298,6 +307,7 @@ function buildOverheadPath(config: LayoutConfig, routePattern: RoutePattern) {
         const nextAisleLabel = lettersFromNumber(aisle + 1);
         path.push({
           kind: "turn",
+          activeBays: [],
           zoneIndex: zone,
           zoneLabel: pad2(zone),
           aisle,
@@ -311,8 +321,20 @@ function buildOverheadPath(config: LayoutConfig, routePattern: RoutePattern) {
       };
 
       if (routePattern === "u-shape") {
-        [...rows].reverse().forEach((row) => addStop(row, "up"));
-        rows.forEach((row) => addStop(row, "down"));
+        [...rows].reverse().forEach((row) =>
+          addStop(
+            row,
+            "up",
+            row.leftBay ? [row.leftBay] : [],
+          ),
+        );
+        rows.forEach((row) =>
+          addStop(
+            row,
+            "down",
+            row.rightBay ? [row.rightBay] : [],
+          ),
+        );
         addTurn("bottom");
         continue;
       }
@@ -925,6 +947,15 @@ function OverheadRoute({
     pathStops.slice(0, activeIndex).forEach((stop) => rows.add(stop.rowKey));
     return rows;
   }, [activeIndex, pathStops]);
+  const visitedBays = useMemo(() => {
+    const bays = new Set<string>();
+    pathStops.slice(0, activeIndex).forEach((stop) => {
+      stop.activeBays.forEach((bay) => {
+        bays.add(overheadBayKey(stop.zoneIndex, stop.aisle, bay));
+      });
+    });
+    return bays;
+  }, [activeIndex, pathStops]);
   const zones = Array.from({ length: config.zones }, (_, index) => index + 1);
   const aisles = Array.from({ length: config.aisles }, (_, index) => index + 1);
   const totalBays = totalBayCount(config);
@@ -998,6 +1029,11 @@ function OverheadRoute({
                       const rowKeys = rows.map(({ leftBay, rightBay }) =>
                         overheadRowKey(zone, aisle, leftBay, rightBay),
                       );
+                      const bayKeys = rows.flatMap(({ leftBay, rightBay }) =>
+                        [leftBay, rightBay]
+                          .filter((bay): bay is number => typeof bay === "number")
+                          .map((bay) => overheadBayKey(zone, aisle, bay)),
+                      );
                       const connectorSide =
                         routePattern === "u-shape"
                           ? "bottom"
@@ -1028,7 +1064,11 @@ function OverheadRoute({
                             ? "u-path"
                             : direction;
                       const completedAisle =
-                        rowKeys.length > 0 && rowKeys.every((rowKey) => visitedRows.has(rowKey));
+                        routePattern === "u-shape"
+                          ? bayKeys.length > 0 &&
+                            bayKeys.every((bayKey) => visitedBays.has(bayKey))
+                          : rowKeys.length > 0 &&
+                            rowKeys.every((rowKey) => visitedRows.has(rowKey));
                       const pickerTop =
                         activeRowIndex >= 0
                           ? `${((activeRowIndex + 0.5) / rows.length) * 100}%`
@@ -1068,23 +1108,38 @@ function OverheadRoute({
 
                             {rows.flatMap(({ leftBay, rightBay }, rowIndex) => {
                               const rowKey = overheadRowKey(zone, aisle, leftBay, rightBay);
-                              const isActivePair =
-                                activePathStop?.kind === "row" &&
-                                activeZoneIndex === zone &&
-                                activePathStop.rowKey === rowKey;
-                              const isDonePair = visitedRows.has(rowKey);
-                              const bayStateClass = isActivePair
-                                ? "active"
-                                : isDonePair
-                                  ? "done"
-                                  : "";
+                              const bayStateClass = (bay: number | null) => {
+                                if (!bay) {
+                                  return "";
+                                }
+
+                                const isActiveBay =
+                                  activePathStop?.kind === "row" &&
+                                  activeZoneIndex === zone &&
+                                  activePathStop.aisle === aisle &&
+                                  activePathStop.activeBays.includes(bay);
+                                const isDoneBay =
+                                  routePattern === "u-shape"
+                                    ? visitedBays.has(overheadBayKey(zone, aisle, bay))
+                                    : visitedRows.has(rowKey);
+
+                                if (isActiveBay) {
+                                  return "active";
+                                }
+
+                                if (isDoneBay) {
+                                  return "done";
+                                }
+
+                                return "";
+                              };
 
                               return [
-                                renderBay(leftBay, `${rowKey}-left`, bayStateClass, {
+                                renderBay(leftBay, `${rowKey}-left`, bayStateClass(leftBay), {
                                   gridColumn: 1,
                                   gridRow: rowIndex + 1,
                                 }),
-                                renderBay(rightBay, `${rowKey}-right`, bayStateClass, {
+                                renderBay(rightBay, `${rowKey}-right`, bayStateClass(rightBay), {
                                   gridColumn: 3,
                                   gridRow: rowIndex + 1,
                                 }),
@@ -1671,7 +1726,11 @@ export default function Home() {
       ? activePathStop
         ? activePathStop.kind === "turn"
           ? `Turning to ${activePathStop.zoneLabel}${activePathStop.nextAisleLabel ?? ""}`
-          : `Walking ${activePathStop.zoneLabel}${activePathStop.aisleLabel}`
+          : routePattern === "u-shape" && activePathStop.activeBays[0]
+            ? `Picking ${activePathStop.zoneLabel}${activePathStop.aisleLabel} Bay ${pad2(
+                activePathStop.activeBays[0],
+              )}`
+            : `Walking ${activePathStop.zoneLabel}${activePathStop.aisleLabel}`
         : "Walking route"
       : activePick?.name ?? `${baySelectionName(normalizedSelectedBay)} sequence`;
   const csv = useMemo(() => buildShipHeroCsv(activeLocations), [activeLocations]);
