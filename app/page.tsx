@@ -1670,7 +1670,6 @@ function BayFaceView({
 
   const picker = (
     <div className="bay-picker-stand">
-      <div aria-hidden="true" className="bay-picker-sightline" />
       <div className="bay-picker-marker">
         <span>Picker</span>
       </div>

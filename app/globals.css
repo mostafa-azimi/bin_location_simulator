@@ -1164,33 +1164,6 @@ button:disabled {
   transform: translateY(-50%);
 }
 
-.bay-picker-sightline {
-  background: linear-gradient(
-    to bottom,
-    color-mix(in srgb, var(--amber) 86%, transparent),
-    color-mix(in srgb, var(--amber) 12%, transparent)
-  );
-  height: calc(50% - 30px);
-  left: 50%;
-  min-height: 22px;
-  position: absolute;
-  top: 0;
-  transform: translateX(-50%);
-  width: 3px;
-  z-index: 2;
-}
-
-.bay-picker-sightline::before {
-  border-bottom: 7px solid var(--amber);
-  border-left: 5px solid transparent;
-  border-right: 5px solid transparent;
-  content: "";
-  left: 50%;
-  position: absolute;
-  top: 0;
-  transform: translateX(-50%);
-}
-
 .bay-picker-marker {
   align-items: center;
   background: var(--foreground);
